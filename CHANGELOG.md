@@ -4,11 +4,11 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
-## [Unreleased]
+## 4.4.0 - 2026-06-21
 
 ### Fixed
 
-- **Strict structured-output compatibility check is now recursive.** `json_schema` (strict) mode is used only when every object in the schema lists all of its properties in `required` — OpenAI strict has no optional fields, so a schema that omits one anywhere in the tree would `400`. Such schemas (and hand-built ones) now degrade to loose `json_object` instead of failing the call; client-side validation still enforces the full shape.
+- **Strict structured-output compatibility check is now recursive.** `json_schema` (strict) mode is used only when every object in the schema lists all of its properties in `required` — OpenAI strict has no optional fields, so a schema that omits one anywhere in the tree would `400`. Such schemas now degrade to loose `json_object` instead of failing the call; client-side validation still enforces the full shape.
 
 ## 4.3.0 - 2026-06-21
 

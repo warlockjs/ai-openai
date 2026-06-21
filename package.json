@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/ai-openai",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "type": "module",
   "description": "OpenAI SDK adapter for @warlock.js/ai",
   "main": "./src/index.ts",
