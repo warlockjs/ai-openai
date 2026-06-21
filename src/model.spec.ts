@@ -561,22 +561,40 @@ describe("OpenAIModel.complete()", () => {
     expect(calls[0].params.response_format).toEqual({ type: "json_object" });
   });
 
-  it("config responseFormat 'json_schema' uses strict mode for object-root schemas", async () => {
+  it("config responseFormat 'json_schema' uses strict mode for a strict-compliant object schema", async () => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-4o-mini", responseFormat: "json_schema" });
+    const schema = {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+      additionalProperties: false,
+    };
+
+    await model.complete([{ role: "user", content: "hi" }], { responseSchema: schema });
+
+    expect(calls[0].params.response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "response", schema, strict: true },
+    });
+  });
+
+  it("config responseFormat 'json_schema' degrades a schema with an optional property to json_object", async () => {
+    // OpenAI strict requires EVERY property in `required`; a schema that
+    // omits one (b) would 400 before sampling, so the adapter degrades to
+    // loose json_object rather than failing the call.
     const { client, calls } = makeFakeClient({ completion: baseCompletion });
     const model = new OpenAIModel(client, { name: "gpt-4o-mini", responseFormat: "json_schema" });
 
     await model.complete([{ role: "user", content: "hi" }], {
-      responseSchema: { type: "object", properties: { summary: { type: "string" } } },
-    });
-
-    expect(calls[0].params.response_format).toEqual({
-      type: "json_schema",
-      json_schema: {
-        name: "response",
-        schema: { type: "object", properties: { summary: { type: "string" } } },
-        strict: true,
+      responseSchema: {
+        type: "object",
+        properties: { a: { type: "string" }, b: { type: "string" } },
+        required: ["a"],
       },
     });
+
+    expect(calls[0].params.response_format).toEqual({ type: "json_object" });
   });
 
   it("extracts multiple parallel tool calls preserving order", async () => {

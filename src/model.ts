@@ -370,8 +370,57 @@ export class OpenAIModel implements ModelContract {
     return (
       schema.type === "object" &&
       typeof schema.properties === "object" &&
-      schema.properties !== null
+      schema.properties !== null &&
+      this.isStrictSafeNode(schema)
     );
+  }
+
+  /**
+   * Recursively check the one strict-mode rule schemas most often trip on:
+   * every object must list ALL of its `properties` in `required` (OpenAI
+   * strict has no notion of optional — optional fields must be expressed
+   * as nullable, e.g. `type: ["string", "null"]`, and still appear in
+   * `required`). A schema that violates this anywhere in the tree is NOT
+   * sent in strict `json_schema` mode — it degrades to loose
+   * `json_object` so a hand-built or optional-bearing schema can't 400
+   * the call ("'required' ... must include every key in properties").
+   * Client-side `validate()` still enforces the full shape.
+   */
+  private isStrictSafeNode(node: unknown): boolean {
+    if (!node || typeof node !== "object") {
+      return true;
+    }
+
+    const record = node as Record<string, unknown>;
+
+    if (record.type === "object" && record.properties && typeof record.properties === "object") {
+      const properties = record.properties as Record<string, unknown>;
+      const keys = Object.keys(properties);
+      const required = Array.isArray(record.required) ? (record.required as unknown[]) : [];
+
+      if (keys.some((key) => !required.includes(key))) {
+        return false;
+      }
+
+      for (const key of keys) {
+        if (!this.isStrictSafeNode(properties[key])) {
+          return false;
+        }
+      }
+    }
+
+    if (record.items !== undefined && !this.isStrictSafeNode(record.items)) {
+      return false;
+    }
+
+    for (const branch of ["anyOf", "allOf", "oneOf"] as const) {
+      const value = record[branch];
+      if (Array.isArray(value) && value.some((sub) => !this.isStrictSafeNode(sub))) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**

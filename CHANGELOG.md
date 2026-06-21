@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Strict structured-output compatibility check is now recursive.** `json_schema` (strict) mode is used only when every object in the schema lists all of its properties in `required` — OpenAI strict has no optional fields, so a schema that omits one anywhere in the tree would `400`. Such schemas (and hand-built ones) now degrade to loose `json_object` instead of failing the call; client-side validation still enforces the full shape.
+
 ## 4.3.0 - 2026-06-21
 
 ### Added
