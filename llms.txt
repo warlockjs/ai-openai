@@ -1,0 +1,9 @@
+# Warlock AI Openai
+
+> Package: `@warlock.js/ai-openai`
+
+> OpenAI SDK adapter for @warlock.js/ai
+
+## Skills
+
+- [setup-openai](@warlock.js/ai-openai/setup-openai/SKILL.md): Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?}) for ModelContract, .embedder({name, dimensions?}) for embeddings. Triggers: `OpenAISDK`, `.model`, `.embedder`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, o-series / gpt-5 reasoning, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: agent wiring — `@warlock.js/ai/run-ai-agent/SKILL.md`; adapter comparison — `@warlock.js/ai/pick-ai-provider/SKILL.md`; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.
