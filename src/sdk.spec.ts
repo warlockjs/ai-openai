@@ -16,6 +16,16 @@ describe("OpenAISDK", () => {
     expect(sdk).toBeInstanceOf(OpenAISDK);
   });
 
+  it("forwards upstream ClientOptions (timeout, maxRetries) to the OpenAI client — C1 regression", () => {
+    // Previously only apiKey + baseURL were forwarded, so every other
+    // type-checked ClientOptions value was silently dropped.
+    const sdk = new OpenAISDK({ apiKey: "test-key", maxRetries: 7, timeout: 1234 });
+    const client = (sdk as unknown as { client: { maxRetries: number; timeout: number } }).client;
+
+    expect(client.maxRetries).toBe(7);
+    expect(client.timeout).toBe(1234);
+  });
+
   it("model() returns a fresh ModelContract bound to this SDK each call", () => {
     const sdk = new OpenAISDK({ apiKey: "test-key" });
     const a = sdk.model({ name: "gpt-4o-mini" });

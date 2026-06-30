@@ -50,12 +50,15 @@ export class OpenAISDK implements SDKAdapterContract {
   private readonly pricing?: Record<string, ModelPricing>;
 
   public constructor(config: OpenAISDKConfig) {
-    this.client = new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-    });
-    this.provider = config.provider ?? "openai";
-    this.pricing = config.pricing;
+    // Peel off the framework-only keys and forward every other upstream
+    // `ClientOptions` (timeout, maxRetries, defaultHeaders, fetch,
+    // organization, project, …) verbatim — they type-check, so dropping them
+    // is a silent footgun. Mirrors the Bedrock/Google/Ollama adapters.
+    const { provider, pricing, ...clientOptions } = config;
+
+    this.client = new OpenAI(clientOptions);
+    this.provider = provider ?? "openai";
+    this.pricing = pricing;
   }
 
   /**
