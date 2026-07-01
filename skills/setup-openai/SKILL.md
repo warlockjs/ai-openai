@@ -1,6 +1,6 @@
 ---
 name: setup-openai
-description: 'Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?}) for ModelContract, .embedder({name, dimensions?}) for embeddings. Triggers: `OpenAISDK`, `.model`, `.embedder`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, o-series / gpt-5 reasoning, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: agent wiring — `@warlock.js/ai/run-ai-agent/SKILL.md`; adapter comparison — `@warlock.js/ai/pick-ai-provider/SKILL.md`; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.'
+description: 'Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?, pdf?, audio?}) for ModelContract, .embedder({name, dimensions?}) for embeddings, .image({name, pricing?}) for gpt-image-*/dall-e-* image generation (via ai.image). PDF input maps to OpenAI file parts (opt-in pdf:true), audio input to input_audio (opt-in audio:true). Triggers: `OpenAISDK`, `.model`, `.embedder`, `.image`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, `gpt-image`, `dall-e`, `ai.image`, `pdf input`, `input_audio`, o-series / gpt-5 reasoning, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock", "generate images with gpt-image / dall-e", "send a pdf / audio to gpt-4o"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: the ai.image verb surface — `@warlock.js/ai/generate-images/SKILL.md`; agent wiring — `@warlock.js/ai/run-ai-agent/SKILL.md`; adapter comparison — `@warlock.js/ai/pick-ai-provider/SKILL.md`; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.'
 ---
 
 # `@warlock.js/ai-openai`
@@ -46,8 +46,10 @@ Returns a `ModelContract` you pass straight into `ai.agent({ model })`.
 | `vision` | Inferred from model name. `true` for `gpt-4o*`, `gpt-4-turbo*`, `gpt-4.1*`, `o1*`, `o3*`, `chatgpt-4o*`; `false` otherwise. |
 | `reasoning` | Inferred from model name. `true` for the o-series (`o1*`, `o3*`, `o4*`) and the `gpt-5*` family; `false` otherwise. Drives whether `reasoning_effort` is forwarded. |
 | `promptCaching` | Always `true`. OpenAI caches long prompt prefixes automatically and reports hits via `usage.cachedTokens` — there are no caller-supplied write breakpoints. |
+| `pdf` | `false` by default (opt-in `.model({ pdf: true })`). OpenAI accepts PDF `file` parts only on specific models (the `gpt-4o` family) — honest off until you set it. |
+| `audio` | `false` by default (opt-in `.model({ audio: true })`). Only the `gpt-4o-audio-preview` family accepts `input_audio`. |
 
-**Override `vision`, `structuredOutput`, or `reasoning` explicitly** via `.model({ name, vision?, structuredOutput?, reasoning? })` — an explicit value always wins over inference.
+**Override `vision`, `structuredOutput`, `reasoning`, `pdf`, or `audio` explicitly** via `.model({ name, vision?, structuredOutput?, reasoning?, pdf?, audio? })` — an explicit value always wins over inference.
 
 ## Structured output
 
@@ -62,15 +64,32 @@ openai.model({ name: "some-route",   responseFormat: "text" })        // no resp
 
 `"json_object"` and `"text"` also flip `structuredOutput` to `false`, so the agent re-injects the schema as a soft prompt hint. Pin `structuredOutput` explicitly to override that.
 
-## Multipart messages (vision)
+## Multipart messages (image / PDF / audio input)
 
-`ContentPart[]` user content is rendered into OpenAI's content-parts shape:
+`ContentPart[]` user content maps per modality to OpenAI's real wire parts:
 
-- `{ type: "text", text }` → `{ type: "text", text }`
+- `{ type: "text" }` → `{ type: "text", text }`
 - `{ type: "image", source: { url } }` → `{ type: "image_url", image_url: { url } }`
 - `{ type: "image", source: { base64, mediaType } }` → `{ type: "image_url", image_url: { url: "data:{mediaType};base64,{base64}" } }`
+- `{ type: "pdf", source: { base64, mediaType } }` → `{ type: "file", file: { filename, file_data: "data:{mediaType};base64,…" } }` — requires `.model({ pdf: true })`
+- `{ type: "audio", source: { base64, mediaType } }` → `{ type: "input_audio", input_audio: { data, format: "wav" | "mp3" } }` — requires `.model({ audio: true })`
 
-The agent prepares attachments before they reach the adapter; this package never reads files itself.
+PDF and audio reach the wire only when the model declares the matching capability — the agent's modality gate throws otherwise, so capability ≡ behavior. A remote-URL pdf/audio source raises a typed `InvalidRequestError` (OpenAI has no remote file/audio source); an unsupported audio media type does too (only `wav` / `mp3`). The agent prepares attachments before they reach the adapter; this package never reads files itself.
+
+## Image generation (`gpt-image` / DALL·E)
+
+`openai.image({ name })` returns an `ImageModelContract` for the `ai.image()` verb:
+
+```ts
+const gpt = openai.image({ name: "gpt-image-1", pricing: { input: 5, output: 40 } }); // token-metered
+const dalle = openai.image({ name: "dall-e-3", pricing: { perImage: 0.04 } });        // per-image
+
+const { data } = await ai.image({ model: gpt, prompt: "a red bicycle", size: "1024x1024" });
+```
+
+- `gpt-image-*` is token-metered (price with `{ input, output }`) and always returns base64 bytes — the adapter never sends `response_format` (the API rejects it).
+- `dall-e-*` is per-image (price with `{ perImage }` / `perImageBySize`); defaults to base64, opt into a hosted URL with `options: { responseFormat: "url" }`.
+- A non-image model id (`openai.image({ name: "gpt-4o" })`) throws `InvalidRequestError` at construction. The verb surface (envelope, options, cost-truth) lives in [`@warlock.js/ai/generate-images/SKILL.md`](@warlock.js/ai/generate-images/SKILL.md).
 
 ## Streaming
 

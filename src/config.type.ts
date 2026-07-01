@@ -1,4 +1,11 @@
-import type { EmbedderConfig, ModelConfig, ModelPricing } from "@warlock.js/ai";
+import type {
+  EmbedderConfig,
+  ImageModelConfig,
+  ModelConfig,
+  ModelPricing,
+  SpeechModelConfig,
+  TranscriptionModelConfig,
+} from "@warlock.js/ai";
 import type { ClientOptions } from "openai";
 
 /**
@@ -108,6 +115,23 @@ export type OpenAIModelConfig = ModelConfig & {
    * than forwarded as an unsupported `reasoning_effort` param.
    */
   reasoning?: boolean;
+  /**
+   * Opt into PDF / document **input**. Default `false` — OpenAI accepts
+   * PDF `file` content parts only on specific models (the `gpt-4o`
+   * family on Chat Completions), so the capability is conservative and
+   * honest by default rather than auto-inferred. When `true`, the agent
+   * lets `{ type: "pdf" }` attachments through and the adapter maps them
+   * to OpenAI `file` parts (base64 `file_data`).
+   */
+  pdf?: boolean;
+  /**
+   * Opt into audio **input**. Default `false` — only the
+   * `gpt-4o-audio-preview` family accepts `input_audio`, so the
+   * capability is off unless you set it. When `true`, the agent lets
+   * `{ type: "audio" }` attachments through and the adapter maps them to
+   * OpenAI `input_audio` parts (`wav` / `mp3`, base64).
+   */
+  audio?: boolean;
 };
 
 /**
@@ -121,3 +145,37 @@ export type OpenAIModelConfig = ModelConfig & {
  * openai.embedder({ name: "text-embedding-3-large", dimensions: 256 });
  */
 export type OpenAIEmbedderConfig = EmbedderConfig;
+
+/**
+ * Per-model configuration for `OpenAISDK.image()`. Mirrors the neutral
+ * {@link ImageModelConfig} — `name` is a `gpt-image-*` or `dall-e-*`
+ * model id, and `pricing` is the optional per-model USD override
+ * (per-token for gpt-image, `perImage` for DALL·E).
+ *
+ * @example
+ * openai.image({ name: "gpt-image-1" });
+ * openai.image({ name: "dall-e-3", pricing: { perImage: 0.04 } });
+ */
+export type OpenAIImageConfig = ImageModelConfig;
+
+/**
+ * Per-model configuration for `OpenAISDK.speech()`. Mirrors the neutral
+ * {@link SpeechModelConfig} — `name` is a `tts-1` / `gpt-4o-mini-tts`
+ * model id, `voice` a default voice, `pricing` the per-character
+ * (`tts-1`) or per-token (`gpt-4o-mini-tts`) USD override.
+ *
+ * @example
+ * openai.speech({ name: "tts-1", voice: "alloy", pricing: { perMillionCharacters: 15 } });
+ */
+export type OpenAISpeechConfig = SpeechModelConfig;
+
+/**
+ * Per-model configuration for `OpenAISDK.transcribe()`. Mirrors the
+ * neutral {@link TranscriptionModelConfig} — `name` is a `whisper-1` /
+ * `gpt-4o-transcribe` model id, `pricing` the per-minute (`whisper-1`)
+ * or per-token (`gpt-4o-transcribe`) USD override.
+ *
+ * @example
+ * openai.transcribe({ name: "whisper-1", pricing: { perMinute: 0.006 } });
+ */
+export type OpenAITranscriptionConfig = TranscriptionModelConfig;

@@ -1,14 +1,27 @@
 import OpenAI from "openai";
 import type {
   EmbedderContract,
+  ImageModelContract,
   ModelContract,
   ModelPricing,
   SDKAdapterContract,
+  SpeechModelContract,
+  TranscriptionModelContract,
 } from "@warlock.js/ai";
 import { approximateTokenCount } from "@warlock.js/ai";
-import type { OpenAIEmbedderConfig, OpenAIModelConfig, OpenAISDKConfig } from "./config.type";
+import type {
+  OpenAIEmbedderConfig,
+  OpenAIImageConfig,
+  OpenAIModelConfig,
+  OpenAISDKConfig,
+  OpenAISpeechConfig,
+  OpenAITranscriptionConfig,
+} from "./config.type";
 import { OpenAIEmbedder } from "./embedder";
+import { OpenAIImageModel } from "./image";
 import { OpenAIModel } from "./model";
+import { OpenAISpeechModel } from "./speech";
+import { OpenAITranscriptionModel } from "./transcription";
 
 /**
  * OpenAI-backed implementation of `SDKAdapterContract`.
@@ -104,5 +117,57 @@ export class OpenAISDK implements SDKAdapterContract {
    */
   public embedder(config: OpenAIEmbedderConfig): EmbedderContract {
     return new OpenAIEmbedder(this.client, config);
+  }
+
+  /**
+   * Build an `OpenAIImageModel` bound to this SDK's client for use with
+   * `ai.image({ model, prompt })`. Accepts the `gpt-image-*` (token-metered)
+   * and `dall-e-*` (per-image-metered) families; a non-image model id
+   * is rejected at construction.
+   *
+   * Pricing resolution mirrors `model()`: per-model `config.pricing`
+   * wins, otherwise the SDK-level registry entry keyed by `config.name`,
+   * otherwise `undefined` (no cost computed). A token-priced
+   * `gpt-image-1` entry can live in the same SDK registry as the chat
+   * models.
+   *
+   * @example
+   * const model = openai.image({ name: "gpt-image-1" });
+   * const { data } = await ai.image({ model, prompt: "a red bicycle" });
+   */
+  public image(config: OpenAIImageConfig): ImageModelContract {
+    const resolvedPricing = config.pricing ?? this.pricing?.[config.name];
+    const resolvedConfig: OpenAIImageConfig =
+      resolvedPricing === config.pricing ? config : { ...config, pricing: resolvedPricing };
+
+    return new OpenAIImageModel(this.client, resolvedConfig, this.provider);
+  }
+
+  /**
+   * Build an `OpenAISpeechModel` (text-to-speech) bound to this SDK's
+   * client, for use with `ai.speech({ model, text })`. Accepts the
+   * `tts-1` / `gpt-4o-mini-tts` families; a non-TTS model id is rejected
+   * at construction.
+   *
+   * @example
+   * const tts = openai.speech({ name: "tts-1", voice: "alloy" });
+   * const { data } = await ai.speech({ model: tts, text: "Hello" });
+   */
+  public speech(config: OpenAISpeechConfig): SpeechModelContract {
+    return new OpenAISpeechModel(this.client, config, this.provider);
+  }
+
+  /**
+   * Build an `OpenAITranscriptionModel` (speech-to-text) bound to this
+   * SDK's client, for use with `ai.transcribe({ model, audio })`.
+   * Accepts the `whisper-1` / `gpt-4o-transcribe` families; a non-STT
+   * model id is rejected at construction.
+   *
+   * @example
+   * const stt = openai.transcribe({ name: "whisper-1" });
+   * const { data } = await ai.transcribe({ model: stt, audio });
+   */
+  public transcribe(config: OpenAITranscriptionConfig): TranscriptionModelContract {
+    return new OpenAITranscriptionModel(this.client, config, this.provider);
   }
 }

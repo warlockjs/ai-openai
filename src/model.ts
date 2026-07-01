@@ -105,6 +105,13 @@ export class OpenAIModel implements ModelContract {
       // no-op (see `buildReasoningParams` siblings — there is no cache
       // param to emit).
       promptCaching: true,
+      // PDF + audio INPUT are off by default — OpenAI accepts `file`
+      // (PDF) and `input_audio` parts only on specific models, so the
+      // flags are conservative/honest and opt-in via config rather than
+      // name-inferred. When set, the agent admits the attachments and
+      // `toOpenAIMessages` maps them to the real wire parts.
+      pdf: config.pdf ?? false,
+      audio: config.audio ?? false,
     };
   }
 
