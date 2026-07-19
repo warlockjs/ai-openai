@@ -320,6 +320,32 @@ describe("OpenAIModel.complete()", () => {
     expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
+  it("emits reasoning_effort: 'none' explicitly for a reasoning-capable model", async () => {
+    // `"none"` must be SENT (not omitted) — omitting it leaves a gpt-5 /
+    // o-series model reasoning server-side by default, which makes the
+    // Chat Completions endpoint reject function tools. Emitting `"none"`
+    // is what unblocks tool-using agents on those models.
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-5-mini" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "none" },
+    });
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("none");
+  });
+
+  it("does NOT forward reasoning_effort: 'none' for a non-reasoning model", async () => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-4o" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "none" },
+    });
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+  });
+
   it("treats cacheControl as a no-op (OpenAI caches automatically, no write breakpoints)", async () => {
     const { client, calls } = makeFakeClient({ completion: baseCompletion });
     const model = new OpenAIModel(client, { name: "gpt-4o-mini" });

@@ -468,12 +468,20 @@ export class OpenAIModel implements ModelContract {
    * so `reasoning.maxTokens` (the Anthropic extended-thinking cap) has no
    * wire equivalent here and is silently ignored.
    *
+   * The neutral `ReasoningEffort` (`"low" | "medium" | "high" | "none"`)
+   * is a subset of OpenAI's accepted values, so it forwards verbatim —
+   * `"none"` included. `"none"` is load-bearing: gpt-5 / o-series models
+   * **reject function tools** on Chat Completions while reasoning is
+   * active, and the endpoint accepts tools only when `reasoning_effort`
+   * is `"none"` (the alternative is the Responses API). This is why the
+   * param is EMITTED for `"none"` rather than omitted — omitting it
+   * leaves the model reasoning server-side by default, so tools would
+   * still be rejected.
+   *
    * No-ops in two cases so the adapter never forwards an unsupported
    * param: (1) the model is not reasoning-capable
-   * (`capabilities.reasoning` is false — e.g. `gpt-4o`), or (2) the caller
-   * supplied no `effort`. The neutral `ReasoningEffort`
-   * (`"low" | "medium" | "high"`) is a strict subset of OpenAI's accepted
-   * values, so it forwards verbatim.
+   * (`capabilities.reasoning` is false — e.g. `gpt-4o`, which 400s on any
+   * `reasoning_effort`), or (2) the caller supplied no `effort`.
    *
    * Returns an empty spread when nothing applies, so the caller can
    * unconditionally `...buildReasoningParams(...)` into the request.

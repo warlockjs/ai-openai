@@ -121,9 +121,28 @@ const model = openai.model({ name: "o3-mini" });   // reasoning auto-true
 await model.complete(messages, { reasoning: { effort: "high" } });  // → reasoning_effort: "high"
 ```
 
-- `reasoning.effort` (`"low" | "medium" | "high"`) maps verbatim to OpenAI's `reasoning_effort` request param.
+- `reasoning.effort` (`"low" | "medium" | "high" | "none"`) maps verbatim to OpenAI's `reasoning_effort` request param.
 - `reasoning.maxTokens` has **no Chat Completions equivalent** (it's the Anthropic extended-thinking budget) and is silently ignored here.
 - When `capabilities.reasoning` is `false` (e.g. `gpt-4o`), the option is dropped — the adapter never forwards `reasoning_effort` to a model that would 400 on it. Pin `reasoning: true` to force it for a custom/fine-tuned reasoning model.
+
+### `effort: "none"` — reasoning off, tools on
+
+gpt-5 / o-series models **reject function tools** on the Chat Completions API while reasoning is active:
+
+```
+400 — Function tools with reasoning_effort are not supported for <model>
+in /v1/chat/completions. To use function tools, use /v1/responses or set
+reasoning_effort to 'none'.
+```
+
+Pass `reasoning: { effort: "none" }` to run such a model **without reasoning** so tool-using agents work:
+
+```ts
+const model = openai.model({ name: "gpt-5-mini" });               // reasoning auto-true
+await model.complete(messages, { reasoning: { effort: "none" }, tools }); // → reasoning_effort: "none"
+```
+
+The adapter **emits** `reasoning_effort: "none"` explicitly — it does **not** omit the param. Omitting it leaves the model reasoning server-side by default, so tools would still be rejected; `"none"` is the switch that turns reasoning off on the wire. Trade-off: you lose reasoning. For tool-heavy agent work (function calls + good replies rather than deep analysis) this is usually the right call — it's the difference between empty replies and working ones. When you need reasoning **and** tools together, use the Responses API (planned).
 
 ## Token usage — what's reported
 

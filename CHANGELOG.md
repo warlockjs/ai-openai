@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 4.8.0 - 2026-07-19
+
+### Added
+
+- **`reasoning: { effort: "none" }`** now emits `reasoning_effort: "none"` on the wire — unblocks function tools on gpt-5 / o-series reasoning models, which otherwise reject tools on Chat Completions while reasoning is active and return empty replies.
+
 ## 4.6.0
 
 ### Added
