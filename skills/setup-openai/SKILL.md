@@ -125,9 +125,9 @@ await model.complete(messages, { reasoning: { effort: "high" } });  // → reaso
 - `reasoning.maxTokens` has **no Chat Completions equivalent** (it's the Anthropic extended-thinking budget) and is silently ignored here.
 - When `capabilities.reasoning` is `false` (e.g. `gpt-4o`), the option is dropped — the adapter never forwards `reasoning_effort` to a model that would 400 on it. Pin `reasoning: true` to force it for a custom/fine-tuned reasoning model.
 
-### `effort: "none"` — reasoning off, tools on
+### `effort: "none"` — reasoning off, tools on (DEFAULTS automatically)
 
-gpt-5 / o-series models **reject function tools** on the Chat Completions API while reasoning is active:
+gpt-5 / o-series models **reject function tools** on the Chat Completions API while reasoning is active — on some model generations this silently degrades to empty replies, on newer ones it's a hard 400:
 
 ```
 400 — Function tools with reasoning_effort are not supported for <model>
@@ -135,14 +135,21 @@ in /v1/chat/completions. To use function tools, use /v1/responses or set
 reasoning_effort to 'none'.
 ```
 
-Pass `reasoning: { effort: "none" }` to run such a model **without reasoning** so tool-using agents work:
+Since there is no working alternative to `"none"` in that state, the adapter defaults to it automatically: whenever a call is made to a reasoning-capable model WITH `tools` AND the caller supplied no `reasoning.effort` at all, `reasoning_effort: "none"` is emitted for you — no opt-in required.
 
 ```ts
-const model = openai.model({ name: "gpt-5-mini" });               // reasoning auto-true
-await model.complete(messages, { reasoning: { effort: "none" }, tools }); // → reasoning_effort: "none"
+const model = openai.model({ name: "gpt-5-mini" });     // reasoning auto-true
+await model.complete(messages, { tools });              // → reasoning_effort: "none", automatically
 ```
 
-The adapter **emits** `reasoning_effort: "none"` explicitly — it does **not** omit the param. Omitting it leaves the model reasoning server-side by default, so tools would still be rejected; `"none"` is the switch that turns reasoning off on the wire. Trade-off: you lose reasoning. For tool-heavy agent work (function calls + good replies rather than deep analysis) this is usually the right call — it's the difference between empty replies and working ones. When you need reasoning **and** tools together, use the Responses API (planned).
+An explicit `reasoning.effort` always overrides the default, in either direction — pass it yourself if you want a different value (and accept that tools may then be rejected, per the error above, since Chat Completions still can't do reasoning + tools together):
+
+```ts
+await model.complete(messages, { tools, reasoning: { effort: "high" } }); // your choice wins — reasoning stays on, tools may 400
+await model.complete(messages, { tools, reasoning: { effort: "none" } }); // same effect as the default, explicit
+```
+
+Calling **without** `tools` is unaffected — `reasoning_effort` is still omitted by default in that case (provider default reasoning, nothing to unblock). Trade-off of the `"none"` default: you lose reasoning on that call. For tool-heavy agent work (function calls + good replies rather than deep analysis) this is the right call — it's the difference between empty replies and working ones. When you need reasoning **and** tools together, use the Responses API (planned).
 
 ## Token usage — what's reported
 

@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 4.9.0 - 2026-08-06
+
+### Fixed
+
+- `reasoning_effort` now defaults to `"none"` automatically on a reasoning-capable model called WITH `tools` and no explicit `reasoning.effort` — previously this required every call site to opt in (added in 4.8.0), so any agent/model config that didn't know to pass it kept hitting rejected tool calls (empty replies, or a hard 400 on newer model generations — `"Function tools with reasoning_effort are not supported ... in /v1/chat/completions"`). An explicit `reasoning.effort` still overrides the default in either direction; calls with no `tools` are unaffected.
+
 ## 4.8.0 - 2026-07-19
 
 ### Added

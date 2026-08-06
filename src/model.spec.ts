@@ -346,6 +346,74 @@ describe("OpenAIModel.complete()", () => {
     expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
+  /** A minimal valid tool config — only its presence in `options.tools` matters here. */
+  function fakeTool(name = "echo") {
+    return {
+      name,
+      description: "echoes",
+      input: {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: (v: unknown) => ({ value: v }),
+        },
+      },
+      execute: async (v: unknown) => v,
+    };
+  }
+
+  it("defaults reasoning_effort to 'none' for a reasoning-capable model called with tools and no explicit reasoning option", async () => {
+    // The bug this closes: omitting reasoning_effort on a reasoning-capable
+    // model leaves it reasoning server-side, and Chat Completions rejects
+    // (or, on newer generations, hard-400s) function tools in that state.
+    // There is no working alternative to "none" here, so it's the default.
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-sol" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      tools: [fakeTool()],
+    });
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("none");
+  });
+
+  it("still omits reasoning_effort for a reasoning-capable model called with NO tools and no explicit option", async () => {
+    // The tools-absent case is unaffected by the new default — this is the
+    // exact scenario the pre-existing "omits reasoning_effort when no
+    // reasoning option is supplied" test already covers; asserted again
+    // here, explicitly, alongside the new tools-present behavior.
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-sol" });
+
+    await model.complete([{ role: "user", content: "hi" }]);
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+  });
+
+  it("does NOT default reasoning_effort for a non-reasoning model called with tools", async () => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-4o" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      tools: [fakeTool()],
+    });
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+  });
+
+  it("an explicit reasoning.effort still wins over the tools-present default, in either direction", async () => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-luna" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      tools: [fakeTool()],
+      reasoning: { effort: "high" },
+    });
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("high");
+  });
+
+
   it("treats cacheControl as a no-op (OpenAI caches automatically, no write breakpoints)", async () => {
     const { client, calls } = makeFakeClient({ completion: baseCompletion });
     const model = new OpenAIModel(client, { name: "gpt-4o-mini" });
@@ -1252,6 +1320,34 @@ describe("OpenAIModel.stream()", () => {
     }
 
     expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("medium");
+  });
+
+  it("defaults reasoning_effort to 'none' on the streaming wire too, for tools with no explicit reasoning option", async () => {
+    const { client, calls } = makeFakeClient({
+      streamChunks: [chunk({ finish: "stop" })],
+    });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-terra" });
+
+    for await (const _event of model.stream([{ role: "user", content: "hi" }], {
+      tools: [
+        {
+          name: "echo",
+          description: "echoes",
+          input: {
+            "~standard": {
+              version: 1,
+              vendor: "test",
+              validate: (v: unknown) => ({ value: v }),
+            },
+          },
+          execute: async (v: unknown) => v,
+        },
+      ],
+    })) {
+      // drain
+    }
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("none");
   });
 
   it("does NOT forward reasoning_effort on the streaming wire for a non-reasoning model", async () => {

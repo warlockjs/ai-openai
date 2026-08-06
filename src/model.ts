@@ -144,7 +144,7 @@ export class OpenAIModel implements ModelContract {
           max_tokens: options?.maxTokens ?? this.config.maxTokens,
           tools: toOpenAITools(options?.tools),
           ...this.buildResponseFormat(options?.responseSchema),
-          ...this.buildReasoningParams(options?.reasoning),
+          ...this.buildReasoningParams(options?.reasoning, Boolean(options?.tools?.length)),
         },
         options?.signal ? { signal: options.signal } : undefined,
       );
@@ -206,7 +206,7 @@ export class OpenAIModel implements ModelContract {
           stream: true,
           stream_options: { include_usage: true },
           ...this.buildResponseFormat(options?.responseSchema),
-          ...this.buildReasoningParams(options?.reasoning),
+          ...this.buildReasoningParams(options?.reasoning, Boolean(options?.tools?.length)),
         },
         options?.signal ? { signal: options.signal } : undefined,
       );
@@ -478,19 +478,36 @@ export class OpenAIModel implements ModelContract {
    * leaves the model reasoning server-side by default, so tools would
    * still be rejected.
    *
-   * No-ops in two cases so the adapter never forwards an unsupported
-   * param: (1) the model is not reasoning-capable
+   * No-ops when the model is not reasoning-capable
    * (`capabilities.reasoning` is false — e.g. `gpt-4o`, which 400s on any
-   * `reasoning_effort`), or (2) the caller supplied no `effort`.
+   * `reasoning_effort`).
+   *
+   * When the caller gave no explicit `effort`: defaults to `"none"` IF
+   * `hasTools` is true, else omits the param (provider default — the
+   * pre-existing behavior for a tool-less call). The default exists
+   * because, on a reasoning-capable model, there is no working alternative
+   * to `"none"` when tools are attached — omitting `reasoning_effort`
+   * leaves reasoning on server-side, which Chat Completions rejects tools
+   * for (empty replies on some model generations, a hard 400 — "Function
+   * tools with reasoning_effort are not supported ... in
+   * /v1/chat/completions" — on newer ones). An explicit `effort` from the
+   * caller always wins over this default, in either direction.
    *
    * Returns an empty spread when nothing applies, so the caller can
    * unconditionally `...buildReasoningParams(...)` into the request.
    */
-  private buildReasoningParams(reasoning: ModelCallOptions["reasoning"]): {
+  private buildReasoningParams(
+    reasoning: ModelCallOptions["reasoning"],
+    hasTools: boolean,
+  ): {
     reasoning_effort?: OpenAI.Chat.Completions.ChatCompletionCreateParams["reasoning_effort"];
   } {
-    if (!this.capabilities.reasoning || !reasoning?.effort) {
+    if (!this.capabilities.reasoning) {
       return {};
+    }
+
+    if (!reasoning?.effort) {
+      return hasTools ? { reasoning_effort: "none" } : {};
     }
 
     return { reasoning_effort: reasoning.effort };
