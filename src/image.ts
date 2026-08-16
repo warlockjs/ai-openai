@@ -89,14 +89,16 @@ export class OpenAIImageModel implements ImageModelContract {
     if (options?.count !== undefined) body.n = options.count;
     if (options?.size !== undefined) body.size = options.size;
     if (options?.quality !== undefined) {
-      body.quality = options.quality as OpenAI.Images.ImageGenerateParamsBase["quality"];
+      body.quality = options.quality as OpenAI.Images.ImageGenerateParamsNonStreaming["quality"];
     }
     if (!isGptImage && responseFormat) body.response_format = responseFormat;
     if (isGptImage && options?.format !== undefined) {
-      body.output_format = options.format as OpenAI.Images.ImageGenerateParamsBase["output_format"];
+      body.output_format =
+        options.format as OpenAI.Images.ImageGenerateParamsNonStreaming["output_format"];
     }
     if (options?.background !== undefined) {
-      body.background = options.background as OpenAI.Images.ImageGenerateParamsBase["background"];
+      body.background =
+        options.background as OpenAI.Images.ImageGenerateParamsNonStreaming["background"];
     }
 
     this.logger.debug(LOG_MODULE, "image.request", "images.generate", {

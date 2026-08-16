@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import type { ToolContract } from "@warlock.js/ai";
+import { tool, type ToolContract } from "@warlock.js/ai";
+import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { toOpenAITools } from "./to-openai-tools";
 
@@ -71,7 +72,28 @@ function makeTool<T>(
   description: string,
   input: StandardSchemaV1<T>,
 ): ToolContract<T, unknown> {
-  return { name, description, input, execute: async () => null };
+  return tool<T, unknown>({ name, description, input, execute: async () => null });
+}
+
+/**
+ * Narrow one converted entry down to its function member. openai v7 turned
+ * `ChatCompletionTool` into a union (`ChatCompletionFunctionTool |
+ * ChatCompletionCustomTool`), so reaching `.function` demands the `type`
+ * discriminant. Throwing on a non-function entry keeps every assertion
+ * below honest — a custom-tool regression fails loudly instead of
+ * silently skipping the check.
+ */
+function functionOf(
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+  index: number,
+): OpenAI.Chat.Completions.ChatCompletionFunctionTool["function"] {
+  const converted = tools?.[index];
+
+  if (converted?.type !== "function") {
+    throw new Error(`Expected tools[${index}] to be a function tool, got "${converted?.type}".`);
+  }
+
+  return converted.function;
 }
 
 describe("toOpenAITools", () => {
@@ -103,7 +125,7 @@ describe("toOpenAITools", () => {
     const tool = makeTool("search", "Generic search", noJsonSchema);
     const result = toOpenAITools([tool as ToolContract<unknown, unknown>]);
 
-    expect(result?.[0].function.parameters).toEqual({ type: "object", properties: {} });
+    expect(functionOf(result, 0).parameters).toEqual({ type: "object", properties: {} });
   });
 
   it("degrades a non-object (array) root schema to the empty-object schema (toParameters regression)", () => {
@@ -113,16 +135,16 @@ describe("toOpenAITools", () => {
     const tool = makeTool("listCities", "List matching cities", arrayRootInput);
     const result = toOpenAITools([tool as ToolContract<unknown, unknown>]);
 
-    expect(result?.[0].function.parameters).toEqual({ type: "object", properties: {} });
+    expect(functionOf(result, 0).parameters).toEqual({ type: "object", properties: {} });
     // The array root must NOT leak through.
-    expect(result?.[0].function.parameters).not.toHaveProperty("items");
+    expect(functionOf(result, 0).parameters).not.toHaveProperty("items");
   });
 
   it("degrades a typeless root schema (no `type` key) to the empty-object schema", () => {
     const tool = makeTool("noType", "Schema without a type", typelessRootInput);
     const result = toOpenAITools([tool as ToolContract<unknown, unknown>]);
 
-    expect(result?.[0].function.parameters).toEqual({ type: "object", properties: {} });
+    expect(functionOf(result, 0).parameters).toEqual({ type: "object", properties: {} });
   });
 
   it("keeps a valid object-root tool intact while degrading a sibling array-root tool", () => {
@@ -134,8 +156,8 @@ describe("toOpenAITools", () => {
       broken as ToolContract<unknown, unknown>,
     ]);
 
-    expect(result?.[0].function.parameters).toEqual(cityInput.jsonSchema);
-    expect(result?.[1].function.parameters).toEqual({ type: "object", properties: {} });
+    expect(functionOf(result, 0).parameters).toEqual(cityInput.jsonSchema);
+    expect(functionOf(result, 1).parameters).toEqual({ type: "object", properties: {} });
   });
 
   it("preserves order across multiple tools", () => {
@@ -149,14 +171,18 @@ describe("toOpenAITools", () => {
       c as ToolContract<unknown, unknown>,
     ]);
 
-    expect(result?.map((t) => t.function.name)).toEqual(["alpha", "beta", "gamma"]);
+    expect(result?.map((_converted, index) => functionOf(result, index).name)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
   });
 
   it("preserves name + description verbatim", () => {
     const tool = makeTool("X", "Y", cityInput);
     const result = toOpenAITools([tool as ToolContract<unknown, unknown>]);
-    expect(result?.[0].function.name).toBe("X");
-    expect(result?.[0].function.description).toBe("Y");
+    expect(functionOf(result, 0).name).toBe("X");
+    expect(functionOf(result, 0).description).toBe("Y");
     expect(result?.[0].type).toBe("function");
   });
 });

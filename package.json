@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/ai-openai",
-  "version": "4.14.0",
+  "version": "4.15.0",
   "type": "module",
   "description": "OpenAI SDK adapter for @warlock.js/ai",
   "main": "./src/index.ts",
@@ -25,7 +25,7 @@
     "url": "https://github.com/warlockjs/ai-openai"
   },
   "dependencies": {
-    "openai": "^6.34.0",
+    "openai": "^7.4.0",
     "@warlock.js/logger": "*"
   },
   "devDependencies": {

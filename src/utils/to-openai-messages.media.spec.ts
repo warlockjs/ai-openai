@@ -1,11 +1,22 @@
 import { InvalidRequestError, type Message } from "@warlock.js/ai";
+import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { toOpenAIMessages } from "./to-openai-messages";
 
+/** Every part shape a mapped message's `content` array can hold. */
+type MappedContentPart =
+  | OpenAI.Chat.Completions.ChatCompletionContentPart
+  | OpenAI.Chat.Completions.ChatCompletionContentPartRefusal;
+
 /** Pull the mapped content-parts off the single user message. */
-function partsOf(content: Message["content"]) {
+function partsOf(content: Message["content"]): MappedContentPart[] {
   const [mapped] = toOpenAIMessages([{ role: "user", content }]);
-  return mapped.content as Array<Record<string, unknown>>;
+
+  if (!Array.isArray(mapped.content)) {
+    throw new Error("Expected the mapped user message to carry an array of content parts.");
+  }
+
+  return mapped.content;
 }
 
 describe("toOpenAIMessages — multimodal parts", () => {

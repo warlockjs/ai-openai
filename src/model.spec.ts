@@ -1,3 +1,4 @@
+import type { ToolConfig } from "@warlock.js/ai";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { OpenAIModel } from "./model";
@@ -347,7 +348,7 @@ describe("OpenAIModel.complete()", () => {
   });
 
   /** A minimal valid tool config — only its presence in `options.tools` matters here. */
-  function fakeTool(name = "echo") {
+  function fakeTool(name = "echo"): ToolConfig<unknown, unknown> {
     return {
       name,
       description: "echoes",
@@ -568,7 +569,17 @@ describe("OpenAIModel.complete()", () => {
     });
 
     expect(calls[0].params.tools).toHaveLength(1);
-    expect(calls[0].params.tools?.[0].function.name).toBe("echo");
+
+    // openai v7 made `ChatCompletionTool` a union — reach `.function`
+    // through the `type` discriminant so a custom-tool regression fails
+    // loudly here instead of quietly skipping the name assertion.
+    const converted = calls[0].params.tools?.[0];
+
+    if (converted?.type !== "function") {
+      throw new Error(`Expected a function tool on the wire, got "${converted?.type}".`);
+    }
+
+    expect(converted.function.name).toBe("echo");
   });
 
   it("uses strict json_schema response_format for object root schemas", async () => {

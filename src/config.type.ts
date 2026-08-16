@@ -38,7 +38,15 @@ import type { ClientOptions } from "openai";
  *   },
  * });
  */
-export type OpenAISDKConfig = ClientOptions & {
+export type OpenAISDKConfig = Omit<ClientOptions, "provider"> & {
+  /**
+   * Free-form upstream label. `ClientOptions.provider` is omitted above
+   * on purpose: openai v7 added its own `provider?: Provider` key (an
+   * opaque branded object from `createProvider()`), and intersecting it
+   * with ours collapsed the field to the uninhabitable `Provider & string`.
+   * The label never reaches the OpenAI client anyway — the constructor
+   * peels it off before forwarding the remaining `ClientOptions`.
+   */
   provider?: string;
   /**
    * Per-model USD pricing registry, keyed by model name. Surfaced onto
