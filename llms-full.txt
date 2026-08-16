@@ -97,7 +97,7 @@ const { data } = await ai.image({ model: gpt, prompt: "a red bicycle", size: "10
 
 - `gpt-image-*` is token-metered (price with `{ input, output }`) and always returns base64 bytes — the adapter never sends `response_format` (the API rejects it).
 - `dall-e-*` is per-image (price with `{ perImage }` / `perImageBySize`); defaults to base64, opt into a hosted URL with `options: { responseFormat: "url" }`.
-- A non-image model id (`openai.image({ name: "gpt-4o" })`) throws `InvalidRequestError` at construction. The verb surface (envelope, options, cost-truth) lives in [`@warlock.js/ai/generate-images/SKILL.md`](@warlock.js/ai/generate-images/SKILL.md).
+- The model id is **not validated locally** — `openai.image({ name })` passes it straight to `client.images.generate`, so an id OpenAI does not serve fails at the provider (wrapped into the typed `AIError` hierarchy), not at construction. Same for `openai.speech({ name })` and `openai.transcribe({ name })`. There are no model-id helpers to consult: `isOpenAIImageModel()`, `OPENAI_IMAGE_MODEL_PREFIXES`, `isOpenAISpeechModel()` and `isOpenAITranscriptionModel()` were all removed in 4.13.0 — branch on your own id list if you need one. The verb surface (envelope, options, cost-truth) lives in [`@warlock.js/ai/generate-images/SKILL.md`](@warlock.js/ai/generate-images/SKILL.md).
 
 ## Streaming
 

@@ -1,5 +1,4 @@
 import {
-  InvalidRequestError,
   ProviderError,
   type GeneratedImage,
   type ImageGenerationOptions,
@@ -10,7 +9,6 @@ import {
 import { log, type Logger } from "@warlock.js/logger";
 import type OpenAI from "openai";
 import type { OpenAIImageConfig } from "./config.type";
-import { isOpenAIImageModel } from "./known-image-models";
 import { wrapOpenAIError } from "./utils";
 
 const LOG_MODULE = "ai.openai";
@@ -32,17 +30,19 @@ function mediaTypeFor(format: string | undefined): string {
  * OpenAI-backed implementation of `ImageModelContract`.
  *
  * **Role.** Bridges the vendor-neutral `ai.image()` verb to OpenAI's
- * **Images** API for the two image families OpenAI ships: the
+ * **Images** API. Metering follows the family the id belongs to: the
  * token-metered `gpt-image-*` models (always return base64 bytes) and
  * the per-image-metered `dall-e-*` models (URL or base64). Like
  * `OpenAIEmbedder`, it's a standalone primitive — no relationship to
  * chat completions, tools, or the agent loop.
  *
- * **Capability guard.** The constructor rejects a non-image model id
- * up front (`gpt-4o` → typed `InvalidRequestError`) so the mistake
- * surfaces at wiring time, not as a downstream provider 400 — the
- * "fail fast at construction" rule shared with the embedder/vision
- * guards.
+ * **No model-id validation.** `config.name` is forwarded to
+ * `client.images.generate` exactly as given — the constructor never
+ * inspects it. OpenAI adds and retires image model ids on its own
+ * schedule, so an id this adapter does not recognize is not the
+ * adapter's call to refuse; an unsupported id surfaces as a provider
+ * error from OpenAI (wrapped into the typed `AIError` hierarchy by
+ * `generate()`), not as a local one.
  *
  * **Error handling.** Raw OpenAI SDK errors are wrapped into the typed
  * `@warlock.js/ai` `AIError` hierarchy via `wrapOpenAIError`, so a
@@ -63,13 +63,6 @@ export class OpenAIImageModel implements ImageModelContract {
   private readonly logger: Logger = log;
 
   public constructor(client: OpenAI, config: OpenAIImageConfig, provider: string = "openai") {
-    if (!isOpenAIImageModel(config.name)) {
-      throw new InvalidRequestError(
-        `"${config.name}" is not a known OpenAI image-generation model. ` +
-          "Use a `gpt-image-*` or `dall-e-*` model with openai.image({ name }).",
-      );
-    }
-
     this.client = client;
     this.name = config.name;
     this.provider = provider;

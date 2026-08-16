@@ -1,7 +1,7 @@
-import { InvalidRequestError, ProviderRateLimitError } from "@warlock.js/ai";
+import { ProviderRateLimitError } from "@warlock.js/ai";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { isOpenAISpeechModel, OpenAISpeechModel } from "./speech";
+import { OpenAISpeechModel } from "./speech";
 
 type SpeechCall = { body: OpenAI.Audio.SpeechCreateParams; options: unknown };
 
@@ -17,19 +17,21 @@ function makeFakeClient(options: { bytes?: number[]; error?: unknown }) {
   return { client, calls };
 }
 
-describe("isOpenAISpeechModel", () => {
-  it("recognizes the tts families, rejects chat models", () => {
-    expect(isOpenAISpeechModel("tts-1")).toBe(true);
-    expect(isOpenAISpeechModel("tts-1-hd")).toBe(true);
-    expect(isOpenAISpeechModel("gpt-4o-mini-tts")).toBe(true);
-    expect(isOpenAISpeechModel("gpt-4o")).toBe(false);
-  });
-});
-
 describe("OpenAISpeechModel", () => {
-  it("throws InvalidRequestError for a non-TTS model id", () => {
+  it("accepts an unrecognized TTS model id as given", () => {
     const { client } = makeFakeClient({});
-    expect(() => new OpenAISpeechModel(client, { name: "gpt-4o" })).toThrow(InvalidRequestError);
+
+    const model = new OpenAISpeechModel(client, { name: "tts-9-ultra" });
+
+    expect(model.name).toBe("tts-9-ultra");
+  });
+
+  it("accepts a foreign (non-OpenAI) model id as given", () => {
+    const { client } = makeFakeClient({});
+
+    const model = new OpenAISpeechModel(client, { name: "eleven-multilingual-v2" });
+
+    expect(model.name).toBe("eleven-multilingual-v2");
   });
 
   it("synthesizes base64 audio with the right media type and character count", async () => {

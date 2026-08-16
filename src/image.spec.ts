@@ -1,8 +1,7 @@
-import { InvalidRequestError, ProviderError, ProviderRateLimitError } from "@warlock.js/ai";
+import { ProviderError, ProviderRateLimitError } from "@warlock.js/ai";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { OpenAIImageModel } from "./image";
-import { isOpenAIImageModel } from "./known-image-models";
 import { OpenAISDK } from "./sdk";
 
 type GenerateCall = {
@@ -45,25 +44,21 @@ function gptImageResponse(): OpenAI.Images.ImagesResponse {
   } as OpenAI.Images.ImagesResponse;
 }
 
-describe("isOpenAIImageModel", () => {
-  it("recognizes the gpt-image and dall-e families, rejects chat models", () => {
-    expect(isOpenAIImageModel("gpt-image-1")).toBe(true);
-    expect(isOpenAIImageModel("gpt-image-1-mini")).toBe(true);
-    expect(isOpenAIImageModel("dall-e-3")).toBe(true);
-    expect(isOpenAIImageModel("gpt-4o")).toBe(false);
-    expect(isOpenAIImageModel("text-embedding-3-small")).toBe(false);
-  });
-});
-
-describe("OpenAIImageModel — construction guard", () => {
-  it("throws InvalidRequestError for a non-image model id", () => {
+describe("OpenAIImageModel — construction", () => {
+  it("accepts an unrecognized image model id as given", () => {
     const { client } = makeFakeClient({ response: gptImageResponse() });
-    expect(() => new OpenAIImageModel(client, { name: "gpt-4o" })).toThrow(InvalidRequestError);
+
+    const model = new OpenAIImageModel(client, { name: "gpt-image-9-turbo" });
+
+    expect(model.name).toBe("gpt-image-9-turbo");
   });
 
-  it("rejects a chat model through the SDK factory too", () => {
+  it("accepts a foreign model id through the SDK factory too", () => {
     const sdk = new OpenAISDK({ apiKey: "test" });
-    expect(() => sdk.image({ name: "gpt-4o" })).toThrow(InvalidRequestError);
+
+    const model = sdk.image({ name: "flux-pro-1.1" });
+
+    expect(model.name).toBe("flux-pro-1.1");
   });
 });
 

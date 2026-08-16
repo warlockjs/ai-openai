@@ -1,8 +1,8 @@
-import { InvalidRequestError, ProviderRateLimitError } from "@warlock.js/ai";
+import { ProviderRateLimitError } from "@warlock.js/ai";
 import type { AudioInput } from "@warlock.js/ai";
 import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-import { isOpenAITranscriptionModel, OpenAITranscriptionModel } from "./transcription";
+import { OpenAITranscriptionModel } from "./transcription";
 
 type CreateCall = { body: OpenAI.Audio.TranscriptionCreateParams; options: unknown };
 
@@ -19,21 +19,21 @@ function makeFakeClient(options: { response?: unknown; error?: unknown }) {
 
 const AUDIO: AudioInput = { base64: "QUJD", mediaType: "audio/mpeg", filename: "clip.mp3" };
 
-describe("isOpenAITranscriptionModel", () => {
-  it("recognizes the whisper / gpt-4o-transcribe families", () => {
-    expect(isOpenAITranscriptionModel("whisper-1")).toBe(true);
-    expect(isOpenAITranscriptionModel("gpt-4o-transcribe")).toBe(true);
-    expect(isOpenAITranscriptionModel("gpt-4o-mini-transcribe")).toBe(true);
-    expect(isOpenAITranscriptionModel("gpt-4o")).toBe(false);
-  });
-});
-
 describe("OpenAITranscriptionModel", () => {
-  it("throws InvalidRequestError for a non-STT model id", () => {
+  it("accepts an unrecognized STT model id as given", () => {
     const { client } = makeFakeClient({});
-    expect(() => new OpenAITranscriptionModel(client, { name: "gpt-4o" })).toThrow(
-      InvalidRequestError,
-    );
+
+    const model = new OpenAITranscriptionModel(client, { name: "gpt-5-transcribe" });
+
+    expect(model.name).toBe("gpt-5-transcribe");
+  });
+
+  it("accepts a foreign (non-OpenAI) model id as given", () => {
+    const { client } = makeFakeClient({});
+
+    const model = new OpenAITranscriptionModel(client, { name: "nova-3" });
+
+    expect(model.name).toBe("nova-3");
   });
 
   it("whisper-1 defaults to verbose_json and returns text + duration + segments", async () => {

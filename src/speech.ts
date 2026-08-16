@@ -1,5 +1,4 @@
 import {
-  InvalidRequestError,
   type SpeechGenerationResponse,
   type SpeechModelContract,
   type SpeechModelPricing,
@@ -11,14 +10,6 @@ import type { OpenAISpeechConfig } from "./config.type";
 import { wrapOpenAIError } from "./utils";
 
 const LOG_MODULE = "ai.openai";
-
-/** Model-id prefixes OpenAI exposes through the **Speech** (TTS) API. */
-const SPEECH_MODEL_PREFIXES = ["tts-1", "gpt-4o-mini-tts", "gpt-audio"] as const;
-
-/** True when `name` is a recognized OpenAI text-to-speech model. */
-export function isOpenAISpeechModel(name: string): boolean {
-  return SPEECH_MODEL_PREFIXES.some((prefix) => name.startsWith(prefix));
-}
 
 /** Map a neutral output container hint to its IANA audio media type. */
 function audioMediaType(format: string | undefined): string {
@@ -43,9 +34,11 @@ function audioMediaType(format: string | undefined): string {
  * via `audio.speech.create`. Standalone primitive — no relation to chat
  * completions or the agent loop. Consumed by the `ai.speech()` verb.
  *
- * **Capability guard.** The constructor rejects a non-TTS model id up
- * front (`tts-1` / `gpt-4o-mini-tts` only) so the mistake surfaces at
- * wiring time, mirroring the embedder / image guards.
+ * **No model-id validation.** `config.name` is forwarded to
+ * `audio.speech.create` exactly as given — the constructor never
+ * inspects it. OpenAI ships and retires TTS model ids on its own
+ * schedule, so an unrecognized id fails at OpenAI (wrapped into the
+ * typed `AIError` hierarchy by `generate()`), not here.
  *
  * @example
  * const tts = new OpenAISpeechModel(client, { name: "tts-1", voice: "alloy" }, "openai");
@@ -61,13 +54,6 @@ export class OpenAISpeechModel implements SpeechModelContract {
   private readonly logger: Logger = log;
 
   public constructor(client: OpenAI, config: OpenAISpeechConfig, provider: string = "openai") {
-    if (!isOpenAISpeechModel(config.name)) {
-      throw new InvalidRequestError(
-        `"${config.name}" is not a known OpenAI text-to-speech model. ` +
-          "Use a `tts-1` / `tts-1-hd` / `gpt-4o-mini-tts` model with openai.speech({ name }).",
-      );
-    }
-
     this.client = client;
     this.name = config.name;
     this.provider = provider;

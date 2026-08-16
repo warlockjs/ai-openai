@@ -148,9 +148,11 @@ export type OpenAIEmbedderConfig = EmbedderConfig;
 
 /**
  * Per-model configuration for `OpenAISDK.image()`. Mirrors the neutral
- * {@link ImageModelConfig} — `name` is a `gpt-image-*` or `dall-e-*`
- * model id, and `pricing` is the optional per-model USD override
- * (per-token for gpt-image, `perImage` for DALL·E).
+ * {@link ImageModelConfig} — `name` is the image model id, passed
+ * through to `client.images.generate` as given (typically a
+ * `gpt-image-*` or `dall-e-*` id, never validated locally), and
+ * `pricing` is the optional per-model USD override (per-token for
+ * gpt-image, `perImage` for DALL·E).
  *
  * @example
  * openai.image({ name: "gpt-image-1" });
@@ -160,9 +162,11 @@ export type OpenAIImageConfig = ImageModelConfig;
 
 /**
  * Per-model configuration for `OpenAISDK.speech()`. Mirrors the neutral
- * {@link SpeechModelConfig} — `name` is a `tts-1` / `gpt-4o-mini-tts`
- * model id, `voice` a default voice, `pricing` the per-character
- * (`tts-1`) or per-token (`gpt-4o-mini-tts`) USD override.
+ * {@link SpeechModelConfig} — `name` is the TTS model id, passed
+ * through to `audio.speech.create` as given (typically `tts-1` /
+ * `gpt-4o-mini-tts`, never validated locally), `voice` a default
+ * voice, `pricing` the per-character (`tts-1`) or per-token
+ * (`gpt-4o-mini-tts`) USD override.
  *
  * @example
  * openai.speech({ name: "tts-1", voice: "alloy", pricing: { perMillionCharacters: 15 } });
@@ -171,9 +175,11 @@ export type OpenAISpeechConfig = SpeechModelConfig;
 
 /**
  * Per-model configuration for `OpenAISDK.transcribe()`. Mirrors the
- * neutral {@link TranscriptionModelConfig} — `name` is a `whisper-1` /
- * `gpt-4o-transcribe` model id, `pricing` the per-minute (`whisper-1`)
- * or per-token (`gpt-4o-transcribe`) USD override.
+ * neutral {@link TranscriptionModelConfig} — `name` is the STT model
+ * id, passed through to `audio.transcriptions.create` as given
+ * (typically `whisper-1` / `gpt-4o-transcribe`, never validated
+ * locally), `pricing` the per-minute (`whisper-1`) or per-token
+ * (`gpt-4o-transcribe`) USD override.
  *
  * @example
  * openai.transcribe({ name: "whisper-1", pricing: { perMinute: 0.006 } });

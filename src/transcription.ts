@@ -1,5 +1,4 @@
 import {
-  InvalidRequestError,
   type AudioInput,
   type TranscribeOptions,
   type TranscriptionModelContract,
@@ -13,14 +12,6 @@ import type { OpenAITranscriptionConfig } from "./config.type";
 import { wrapOpenAIError } from "./utils";
 
 const LOG_MODULE = "ai.openai";
-
-/** Model-id prefixes OpenAI exposes through the **Transcription** (STT) API. */
-const TRANSCRIPTION_MODEL_PREFIXES = ["whisper", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"] as const;
-
-/** True when `name` is a recognized OpenAI speech-to-text model. */
-export function isOpenAITranscriptionModel(name: string): boolean {
-  return TRANSCRIPTION_MODEL_PREFIXES.some((prefix) => name.startsWith(prefix));
-}
 
 /** Defensive view over the response, whose shape varies by `response_format`. */
 type RawTranscription = {
@@ -41,6 +32,11 @@ type RawTranscription = {
  * OpenAI-backed implementation of `TranscriptionModelContract`
  * (speech-to-text) via `audio.transcriptions.create`. Consumed by the
  * `ai.transcribe()` verb.
+ *
+ * **No model-id validation.** `config.name` is forwarded to
+ * `audio.transcriptions.create` exactly as given — the constructor
+ * never inspects it. An unrecognized id fails at OpenAI (wrapped into
+ * the typed `AIError` hierarchy by `transcribe()`), not here.
  *
  * **Response format.** Defaults to `verbose_json` for `whisper-1` (so
  * the run gets a `duration` + timestamped `segments`) and `json` for
@@ -64,13 +60,6 @@ export class OpenAITranscriptionModel implements TranscriptionModelContract {
     config: OpenAITranscriptionConfig,
     provider: string = "openai",
   ) {
-    if (!isOpenAITranscriptionModel(config.name)) {
-      throw new InvalidRequestError(
-        `"${config.name}" is not a known OpenAI transcription model. ` +
-          "Use a `whisper-1` / `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` model with openai.transcribe({ name }).",
-      );
-    }
-
     this.client = client;
     this.name = config.name;
     this.provider = provider;

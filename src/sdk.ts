@@ -121,9 +121,10 @@ export class OpenAISDK implements SDKAdapterContract {
 
   /**
    * Build an `OpenAIImageModel` bound to this SDK's client for use with
-   * `ai.image({ model, prompt })`. Accepts the `gpt-image-*` (token-metered)
-   * and `dall-e-*` (per-image-metered) families; a non-image model id
-   * is rejected at construction.
+   * `ai.image({ model, prompt })`. `config.name` is passed through to
+   * `client.images.generate` as given — no id is rejected locally, so
+   * an unsupported model fails at OpenAI, not here. Metering follows
+   * the family: `gpt-image-*` is token-metered, `dall-e-*` per-image.
    *
    * Pricing resolution mirrors `model()`: per-model `config.pricing`
    * wins, otherwise the SDK-level registry entry keyed by `config.name`,
@@ -145,9 +146,10 @@ export class OpenAISDK implements SDKAdapterContract {
 
   /**
    * Build an `OpenAISpeechModel` (text-to-speech) bound to this SDK's
-   * client, for use with `ai.speech({ model, text })`. Accepts the
-   * `tts-1` / `gpt-4o-mini-tts` families; a non-TTS model id is rejected
-   * at construction.
+   * client, for use with `ai.speech({ model, text })`. `config.name` is
+   * passed through to `audio.speech.create` as given — no id is
+   * rejected locally, so an unsupported model fails at OpenAI, not
+   * here.
    *
    * @example
    * const tts = openai.speech({ name: "tts-1", voice: "alloy" });
@@ -160,8 +162,9 @@ export class OpenAISDK implements SDKAdapterContract {
   /**
    * Build an `OpenAITranscriptionModel` (speech-to-text) bound to this
    * SDK's client, for use with `ai.transcribe({ model, audio })`.
-   * Accepts the `whisper-1` / `gpt-4o-transcribe` families; a non-STT
-   * model id is rejected at construction.
+   * `config.name` is passed through to `audio.transcriptions.create`
+   * as given — no id is rejected locally, so an unsupported model
+   * fails at OpenAI, not here.
    *
    * @example
    * const stt = openai.transcribe({ name: "whisper-1" });

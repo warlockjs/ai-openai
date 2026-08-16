@@ -4,6 +4,17 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 4.13.0
+
+### Removed
+
+- **BREAKING** — `isOpenAIImageModel()` and `OPENAI_IMAGE_MODEL_PREFIXES` are no longer exported; the `known-image-models` module is deleted. Nothing in the adapter read them once the construction-time gate went away, so they were a public list of model ids that enforced nothing and went stale on OpenAI's release schedule, not this package's. Import them from nowhere — branch on your own id list if you need one.
+- **BREAKING** — `isOpenAISpeechModel()` and `isOpenAITranscriptionModel()` are no longer exported either, for the same reason. Once their construction-time gates went away nothing in the adapter read them, leaving two more public model-id lists that enforced nothing. No `@warlock.js/ai-*` adapter validates a model id locally, so the package no longer ships a helper that implies otherwise — branch on your own id list if you need one.
+
+### Changed
+
+- `openai.image({ name })`, `openai.speech({ name })` and `openai.transcribe({ name })` no longer reject an unknown model id at construction — the id is forwarded to OpenAI as given, so an id OpenAI does not serve now fails as a typed provider error instead of a local `InvalidRequestError`.
+
 ## 4.12.0
 
 ### Changed
