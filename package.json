@@ -26,13 +26,16 @@
   },
   "dependencies": {
     "openai": "^7.4.0",
-    "@warlock.js/logger": "*"
+    "@warlock.js/logger": "workspace:^"
   },
   "devDependencies": {
+    "@standard-schema/spec": "^1.0.0",
+    "@warlock.js/ai": "workspace:^",
     "typescript": "^5.0.0",
     "vitest": "4.1.10"
   },
   "peerDependencies": {
     "@warlock.js/ai": "*"
-  }
+  },
+  "packageManager": "pnpm@11.24.0"
 }
