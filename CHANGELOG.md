@@ -4,6 +4,13 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.7.0
+
+### Fixed
+
+- `embed()` on a provider response with an empty `data` array now throws `EmbeddingVectorCountMismatchError` naming the provider and expected/received counts, instead of a bare `TypeError: Cannot read properties of undefined (reading 'embedding')`.
+- Chat completions on a provider response with an empty `choices` array now throw a `ProviderError` naming the provider, model, and choice count, instead of a bare `TypeError`.
+
 ## 5.2.3 - 2026-09-02
 
 ### Fixed
