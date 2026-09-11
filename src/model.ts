@@ -1,4 +1,5 @@
 import {
+  ProviderError,
   safeJsonParse,
   type Message,
   type ModelCallOptions,
@@ -159,7 +160,22 @@ export class OpenAIModel implements ModelContract {
       throw wrapped;
     }
 
-    const choice = response.choices[0];
+    const [choice] = response.choices;
+
+    if (choice === undefined) {
+      // A 200 carrying an empty `choices` array. Every line below reads off
+      // `choice`, so without this the caller got a bare `TypeError: Cannot
+      // read properties of undefined` — no provider, no model, no hint that
+      // the response itself was the problem rather than our handling of it.
+      //
+      // `ProviderError` because that is what this is: the provider answered
+      // successfully and returned nothing usable. Callers already branch on
+      // `instanceof ProviderError` for any provider-side failure.
+      throw new ProviderError("OpenAI returned a response with no choices.", {
+        context: { provider: "openai", model: this.name, choices: response.choices.length },
+      });
+    }
+
     const finishReason = mapFinishReason(choice.finish_reason);
     const usage = this.extractUsage(response.usage);
 

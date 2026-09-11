@@ -1,4 +1,5 @@
 import {
+  EmbeddingVectorCountMismatchError,
   type EmbeddingBatchResult,
   type EmbeddingResult,
   type EmbeddingUsage,
@@ -65,8 +66,27 @@ export class OpenAIEmbedder implements EmbedderContract {
   public async embed(input: string): Promise<EmbeddingResult> {
     const { response, usage } = await this.request(input);
 
+    const [first] = response.data;
+
+    if (first === undefined) {
+      // A 200 whose `data` array is empty. Before this guard the next line
+      // read `.embedding` off `undefined` and the caller got a bare
+      // `TypeError: Cannot read properties of undefined`, naming neither the
+      // provider nor what it actually returned.
+      //
+      // Same typed error the RAG and skill-catalog paths raise for this
+      // contract violation, so one shortfall has one name wherever it
+      // surfaces. Expected 1, received 0.
+      throw new EmbeddingVectorCountMismatchError({
+        provider: this.provider,
+        expectedCount: 1,
+        receivedCount: response.data.length,
+        record: input,
+      });
+    }
+
     return {
-      vector: response.data[0].embedding,
+      vector: first.embedding,
       dimensions: this.dimensions,
       usage,
     };
@@ -129,8 +149,19 @@ export class OpenAIEmbedder implements EmbedderContract {
 
     // Cache dimensions on the first response. Once set, stays set —
     // we trust the first call to define the shape for this embedder.
+    //
+    // Reads the first entry optionally rather than asserting it: this runs for
+    // BOTH embed() and embedMany(), and an empty `data` array is a real
+    // provider response, not an impossible one. Leaving `dimensions` at 0 for
+    // an empty response is correct — the callers each raise their own typed
+    // error about the shortfall, and cacheing a dimension off a response that
+    // carried no vectors would be inventing a shape from nothing.
     if (this.dimensions === 0) {
-      this.dimensions = response.data[0].embedding.length;
+      const firstEmbedding = response.data[0]?.embedding;
+
+      if (firstEmbedding !== undefined) {
+        this.dimensions = firstEmbedding.length;
+      }
     }
 
     const usage: EmbeddingUsage = {
