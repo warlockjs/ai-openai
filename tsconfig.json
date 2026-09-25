@@ -7,7 +7,7 @@
     // UNSET lib resolves to the .full variant, which bundles DOM - so naming a lib
     // without it would silently drop DOM types this package already relied on.
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": "CommonJS",
+    "module": "ESNext",
     "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
