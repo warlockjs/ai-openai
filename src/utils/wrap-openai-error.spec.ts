@@ -145,6 +145,35 @@ describe("wrapOpenAIError", () => {
     expect(wrapped).toBeInstanceOf(InvalidRequestError);
   });
 
+  // FORMAI couldn't see why every call failed. The SDK's own APIError carries
+  // the rejected `param` and the `requestID`; both must reach the caller.
+  it("keeps the provider's message, code, rejected param and request id from a real SDK error", () => {
+    const apiError = OpenAI.APIError.generate(
+      400,
+      {
+        error: {
+          message: "Unsupported parameter: 'max_tokens' is not supported with this model.",
+          type: "invalid_request_error",
+          param: "max_tokens",
+          code: "unsupported_parameter",
+        },
+      },
+      undefined,
+      new Headers({ "x-request-id": "req_abc" }),
+    );
+
+    const wrapped = wrapOpenAIError(apiError);
+
+    expect(wrapped).toBeInstanceOf(InvalidRequestError);
+    expect(wrapped.message).toContain("Unsupported parameter: 'max_tokens'");
+    expect(wrapped.context).toMatchObject({
+      status: 400,
+      code: "unsupported_parameter",
+      param: "max_tokens",
+      requestId: "req_abc",
+    });
+  });
+
   it("maps 422 to InvalidRequestError", () => {
     const wrapped = wrapOpenAIError(fakeOpenAIError({ status: 422 }));
 

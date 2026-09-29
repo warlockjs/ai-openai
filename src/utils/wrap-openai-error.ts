@@ -23,6 +23,8 @@ type OpenAIErrorShape = {
   code?: string | null;
   message?: string;
   type?: string | null;
+  /** The request parameter the provider rejected, e.g. `max_tokens`. */
+  param?: string | null;
   headers?: Record<string, string> | undefined;
   name?: string;
 };
@@ -109,6 +111,7 @@ function toShape(thrown: unknown): OpenAIErrorShape {
       code: thrown.code,
       message: thrown.message,
       type: thrown.type,
+      param: thrown.param,
       headers: thrown.headers as Record<string, string> | undefined,
       name: thrown.name,
     };
@@ -122,6 +125,7 @@ function toShape(thrown: unknown): OpenAIErrorShape {
       code: typeof raw.code === "string" ? raw.code : undefined,
       message: typeof raw.message === "string" ? raw.message : undefined,
       type: typeof raw.type === "string" ? raw.type : undefined,
+      param: typeof raw.param === "string" ? raw.param : undefined,
       headers:
         typeof raw.headers === "object" && raw.headers !== null
           ? (raw.headers as Record<string, string>)
@@ -179,6 +183,10 @@ function buildContext(
     context.type = shape.type;
   }
 
+  if (shape.param) {
+    context.param = shape.param;
+  }
+
   const requestId = readRequestId(thrown);
 
   if (requestId) {
@@ -189,8 +197,9 @@ function buildContext(
 }
 
 /**
- * OpenAI puts the request id on `APIError.request_id`. Extract
- * defensively — both camel and snake keys exist across SDK versions.
+ * The request id OpenAI returned. Current SDKs expose it as
+ * `APIError.requestID`; older ones and hand-rolled errors use
+ * `request_id` / `requestId`. Extract defensively.
  */
 function readRequestId(thrown: unknown): string | undefined {
   if (typeof thrown !== "object" || thrown === null) {
@@ -205,6 +214,10 @@ function readRequestId(thrown: unknown): string | undefined {
 
   if (typeof raw.requestId === "string") {
     return raw.requestId;
+  }
+
+  if (typeof raw.requestID === "string") {
+    return raw.requestID;
   }
 
   return undefined;

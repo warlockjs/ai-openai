@@ -70,8 +70,29 @@ describe("OpenAIModel.complete()", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].params.model).toBe("gpt-4o-mini");
     expect(calls[0].params.temperature).toBe(0.4);
-    expect(calls[0].params.max_tokens).toBe(256);
+    expect(calls[0].params.max_completion_tokens).toBe(256);
     expect(calls[0].params.messages).toEqual([{ role: "user", content: "hi" }]);
+  });
+
+  // Current OpenAI models answer 400 unsupported_parameter to `max_tokens`
+  // (FORMAI, 5.26 P0). The adapter targets current request shapes only.
+  it("never sends the legacy max_tokens key", async () => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-luna", maxTokens: 512 });
+
+    await model.complete([{ role: "user", content: "hi" }]);
+
+    expect(calls[0].params).not.toHaveProperty("max_tokens");
+    expect(calls[0].params.max_completion_tokens).toBe(512);
+  });
+
+  it("omits temperature for a reasoning-capable model, which rejects non-default values", async () => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-luna", temperature: 0.3 });
+
+    await model.complete([{ role: "user", content: "hi" }], { temperature: 0.7 });
+
+    expect(calls[0].params).not.toHaveProperty("temperature");
   });
 
   it("per-call options override instance defaults", async () => {
@@ -88,7 +109,7 @@ describe("OpenAIModel.complete()", () => {
     });
 
     expect(calls[0].params.temperature).toBe(0.9);
-    expect(calls[0].params.max_tokens).toBe(64);
+    expect(calls[0].params.max_completion_tokens).toBe(64);
   });
 
   it("normalizes the response into ModelResponse shape", async () => {
@@ -113,7 +134,8 @@ describe("OpenAIModel.complete()", () => {
     await model.complete([{ role: "user", content: "hi" }]);
 
     expect(calls[0].params.temperature).toBeUndefined();
-    expect(calls[0].params.max_tokens).toBeUndefined();
+    expect(calls[0].params.max_completion_tokens).toBeUndefined();
+    expect(calls[0].params).not.toHaveProperty("max_tokens");
   });
 
   it("forwards an AbortSignal to the create call's request options", async () => {
@@ -1112,6 +1134,21 @@ describe("OpenAIModel.stream()", () => {
       (calls[0].params as { stream_options?: { include_usage?: boolean } }).stream_options
         ?.include_usage,
     ).toBe(true);
+  });
+
+  it("sends max_completion_tokens, never max_tokens, and no temperature for a reasoning model, on the streaming wire", async () => {
+    const { client, calls } = makeFakeClient({
+      streamChunks: [chunk({ finish: "stop" })],
+    });
+    const model = new OpenAIModel(client, { name: "gpt-5.6-luna", temperature: 0.3, maxTokens: 300 });
+
+    for await (const _event of model.stream([{ role: "user", content: "hi" }])) {
+      // drain
+    }
+
+    expect(calls[0].params).not.toHaveProperty("max_tokens");
+    expect(calls[0].params.max_completion_tokens).toBe(300);
+    expect(calls[0].params).not.toHaveProperty("temperature");
   });
 
   it("accumulates a tool call whose id/name/arguments arrive across multiple chunks", async () => {

@@ -4,6 +4,17 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## Unreleased
+
+### Changed
+
+- **Behaviour change:** requests send `max_completion_tokens` and never the legacy `max_tokens`, which current OpenAI models (the gpt-5 family and later) reject with `400 unsupported_parameter`. `maxTokens` in config and call options is unchanged.
+- Reasoning-capable models (o-series, gpt-5 family) no longer receive `temperature`; they accept only the default value and reject any other.
+
+### Fixed
+
+- A provider error now keeps the parameter OpenAI rejected (`context.param`) and the request id (`context.requestId`, read from the SDK's `requestID`), next to the status and code.
+
 ## 5.25.0 - 2026-09-28
 
 ### Changed

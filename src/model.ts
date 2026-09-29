@@ -141,8 +141,7 @@ export class OpenAIModel implements ModelContract {
         {
           model: this.name,
           messages: toOpenAIMessages(messages),
-          temperature: options?.temperature ?? this.config.temperature,
-          max_tokens: options?.maxTokens ?? this.config.maxTokens,
+          ...this.buildSamplingParams(options),
           tools: toOpenAITools(options?.tools),
           ...this.buildResponseFormat(options?.responseSchema),
           ...this.buildReasoningParams(options?.reasoning, Boolean(options?.tools?.length)),
@@ -216,8 +215,7 @@ export class OpenAIModel implements ModelContract {
         {
           model: this.name,
           messages: toOpenAIMessages(messages),
-          temperature: options?.temperature ?? this.config.temperature,
-          max_tokens: options?.maxTokens ?? this.config.maxTokens,
+          ...this.buildSamplingParams(options),
           tools: toOpenAITools(options?.tools),
           stream: true,
           stream_options: { include_usage: true },
@@ -512,6 +510,28 @@ export class OpenAIModel implements ModelContract {
    * Returns an empty spread when nothing applies, so the caller can
    * unconditionally `...buildReasoningParams(...)` into the request.
    */
+  /**
+   * Output-length and sampling params, in current Chat Completions shapes only.
+   *
+   * - `max_completion_tokens`, never the legacy `max_tokens`: current
+   *   models (the gpt-5 family and later) answer `400 unsupported_parameter`
+   *   to `max_tokens`, and `max_completion_tokens` is accepted everywhere.
+   * - No `temperature` for a reasoning-capable model: those accept only the
+   *   default value and reject any other with a 400.
+   */
+  private buildSamplingParams(options: ModelCallOptions | undefined): {
+    max_completion_tokens?: number;
+    temperature?: number;
+  } {
+    const maxTokens = options?.maxTokens ?? this.config.maxTokens;
+    const temperature = options?.temperature ?? this.config.temperature;
+
+    return {
+      max_completion_tokens: maxTokens,
+      ...(!this.capabilities.reasoning && { temperature }),
+    };
+  }
+
   private buildReasoningParams(
     reasoning: ModelCallOptions["reasoning"],
     hasTools: boolean,
