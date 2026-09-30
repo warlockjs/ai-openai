@@ -1,5 +1,9 @@
+import { InvalidRequestError } from "@warlock.js/ai";
+import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { OpenAIEmbedder } from "./embedder";
+import { OpenAIModel } from "./model";
+import { OpenAIResponsesModel } from "./responses-model";
 import { OpenAISDK } from "./sdk";
 
 describe("OpenAISDK", () => {
@@ -141,5 +145,109 @@ describe("OpenAISDK.embedder()", () => {
 
     expect(withDims.dimensions).toBe(256);
     expect(withoutDims.dimensions).toBe(0); // lazy — unresolved until first call
+  });
+});
+
+describe("OpenAISDK api gate (Responses adapter)", () => {
+  it("builds the Chat Completions OpenAIModel by default and for api: 'chat'", () => {
+    const sdk = new OpenAISDK({ apiKey: "k" });
+
+    expect(sdk.model({ name: "gpt-4o-mini" })).toBeInstanceOf(OpenAIModel);
+    expect(sdk.model({ name: "gpt-4o-mini", api: "chat" })).toBeInstanceOf(OpenAIModel);
+    expect(sdk.model({ name: "gpt-4o-mini" })).not.toBeInstanceOf(OpenAIResponsesModel);
+  });
+
+  it("builds OpenAIResponsesModel only for api: 'responses' on the direct openai provider", () => {
+    const explicit = new OpenAISDK({ apiKey: "k", provider: "openai" });
+    const implicit = new OpenAISDK({ apiKey: "k" });
+
+    expect(explicit.model({ name: "gpt-5.6", api: "responses" })).toBeInstanceOf(
+      OpenAIResponsesModel,
+    );
+    expect(implicit.model({ name: "gpt-5.6", api: "responses" })).toBeInstanceOf(
+      OpenAIResponsesModel,
+    );
+  });
+
+  it("keeps SDK-level pricing resolution on the Responses model", () => {
+    const sdk = new OpenAISDK({ apiKey: "k", pricing: { "gpt-5.6": { input: 1, output: 2 } } });
+
+    expect(sdk.model({ name: "gpt-5.6", api: "responses" }).pricing).toEqual({ input: 1, output: 2 });
+  });
+
+  it.each(["deepseek", "groq", "xai", "mistral", "openrouter"])(
+    "refuses api: 'responses' for the %s provider label (wrapper protection)",
+    (provider) => {
+      const sdk = new OpenAISDK({ apiKey: "k", baseURL: "https://example.test/v1", provider });
+
+      expect(() => sdk.model({ name: "some-model", api: "responses" })).toThrow(InvalidRequestError);
+      expect(() => sdk.model({ name: "some-model", api: "responses" })).toThrow(
+        /only on the direct "openai" provider/,
+      );
+    },
+  );
+
+  it.each(["deepseek", "groq", "xai", "mistral"])(
+    "a %s-labeled SDK still builds the Chat model and sends a Chat Completions request",
+    async (provider) => {
+      const sdk = new OpenAISDK({ apiKey: "k", provider });
+      const model = sdk.model({ name: "some-model", api: "chat" });
+      const chatCalls: unknown[] = [];
+      const responsesCalls: unknown[] = [];
+      const fakeClient = {
+        chat: {
+          completions: {
+            create: async (params: unknown) => {
+              chatCalls.push(params);
+              return {
+                choices: [
+                  { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+                ],
+              };
+            },
+          },
+        },
+        responses: {
+          create: async (params: unknown) => {
+            responsesCalls.push(params);
+            throw new Error("wrapper reached the Responses API");
+          },
+        },
+      };
+      (model as unknown as { client: unknown }).client = fakeClient;
+
+      await model.complete([{ role: "user", content: "hi" }]);
+
+      expect(model).toBeInstanceOf(OpenAIModel);
+      expect(chatCalls).toHaveLength(1);
+      expect(responsesCalls).toHaveLength(0);
+    },
+  );
+
+  it("rejects an unknown api value", () => {
+    const sdk = new OpenAISDK({ apiKey: "k" });
+
+    expect(() =>
+      sdk.model({ name: "gpt-4o-mini", api: "completions" as unknown as "chat" }),
+    ).toThrow(/Unknown OpenAI api "completions"/);
+  });
+
+  it("OpenAIModel itself refuses api: 'responses' (the class cannot be misused directly)", () => {
+    const client = new OpenAI({ apiKey: "k" });
+
+    expect(() => new OpenAIModel(client, { name: "gpt-5.6", api: "responses" })).toThrow(
+      InvalidRequestError,
+    );
+    expect(() => new OpenAIModel(client, { name: "gpt-5.6", api: "responses" }, "deepseek")).toThrow(
+      /cannot serve api: "responses"/,
+    );
+  });
+
+  it("OpenAIResponsesModel refuses a wrapper provider label even if constructed directly", () => {
+    const client = new OpenAI({ apiKey: "k" });
+
+    expect(() => new OpenAIResponsesModel(client, { name: "gpt-5.6" }, "groq")).toThrow(
+      InvalidRequestError,
+    );
   });
 });

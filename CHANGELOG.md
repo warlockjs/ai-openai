@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/ai-openai` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 5.27.0
+
+### Added
+
+- **Responses API (opt-in).** `sdk.model({ name, api: "responses" })` routes an OpenAI model through `/v1/responses`, so a reasoning model (gpt-5 family, o-series, gpt-6) can use function tools with reasoning on. Chat Completions stays the default and is unchanged. Under `api: "responses"` reasoning uses the provider default even when tools are attached (more reasoning tokens and latency than the Chat path, which forces reasoning off with tools); the system prompt is sent as `instructions`; requests use `store: false`; `pdf`/`audio` inputs are off. Only the `openai` provider accepts it: the DeepSeek, Groq, xAI and Mistral adapters reject `api: "responses"`.
+
 ## 5.26.0 - 2026-09-30
 
 ### Changed

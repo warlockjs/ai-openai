@@ -74,14 +74,37 @@ export type OpenAISDKConfig = Omit<ClientOptions, "provider"> & {
 export type OpenAIResponseFormat = "json_schema" | "json_object" | "text";
 
 /**
+ * Which OpenAI endpoint a model speaks.
+ *
+ * - `"chat"` (default) - Chat Completions. Reasoning models reject function
+ *   tools here unless reasoning is off, so the adapter sends
+ *   `reasoning_effort: "none"` when tools are attached.
+ * - `"responses"` - the Responses API, stateless (`store: false`). Reasoning
+ *   stays at the provider default even with tools attached. Direct OpenAI
+ *   only: `OpenAISDK.model()` throws for any other provider label, so the
+ *   wrapper packages (deepseek, groq, xai, mistral) can never reach it.
+ */
+export type OpenAIApi = "chat" | "responses";
+
+/**
  * Per-model configuration for `OpenAISDK.model()`. Extends the neutral
  * `ModelConfig` with OpenAI-specific capability overrides.
  *
  * @example
  * openai.model({ name: "gpt-4o-mini" });               // vision auto-true
  * openai.model({ name: "fine-tuned-x", vision: true }); // dev override
+ *
+ * @example
+ * // Reasoning model + tools on the Responses API (direct OpenAI only):
+ * openai.model({ name: "gpt-5.6", api: "responses" });
  */
 export type OpenAIModelConfig = ModelConfig & {
+  /**
+   * Wire API to use. Default `"chat"` (Chat Completions). `"responses"`
+   * selects the stateless Responses adapter and is accepted only on the
+   * direct `"openai"` provider label; see {@link OpenAIApi}.
+   */
+  api?: OpenAIApi;
   /**
    * Override the auto-inferred vision capability. When omitted, the
    * adapter checks the model name against a known-prefix list (see

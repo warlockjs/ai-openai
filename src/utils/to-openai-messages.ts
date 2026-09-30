@@ -108,7 +108,7 @@ function addPromptCacheBreakpoints(
  * its concatenated text so OpenAI's wire format stays valid. Plain
  * strings pass through unchanged.
  */
-function stringifyContent(content: string | ContentPart[]): string {
+export function stringifyContent(content: string | ContentPart[]): string {
   if (typeof content === "string") {
     return content;
   }
@@ -144,12 +144,7 @@ function toOpenAIContentPart(part: ContentPart): OpenAI.Chat.Completions.ChatCom
   }
 
   if (part.type === "image") {
-    const url =
-      "url" in part.source
-        ? part.source.url
-        : `data:${part.source.mediaType};base64,${part.source.base64}`;
-
-    return { type: "image_url", image_url: { url } };
+    return { type: "image_url", image_url: { url: toImageUrl(part.source) } };
   }
 
   if (part.type === "pdf") {
@@ -182,6 +177,16 @@ function toOpenAIContentPart(part: ContentPart): OpenAI.Chat.Completions.ChatCom
       format: toOpenAIAudioFormat(part.source.mediaType),
     },
   };
+}
+
+/**
+ * Render an image source as a URL: a remote URL passes through, inlined
+ * base64 bytes become a `data:` URL. Shared with the Responses adapter.
+ */
+export function toImageUrl(
+  source: Extract<ContentPart, { type: "image" }>["source"],
+): string {
+  return "url" in source ? source.url : `data:${source.mediaType};base64,${source.base64}`;
 }
 
 /**

@@ -1,4 +1,5 @@
 import {
+  InvalidRequestError,
   ProviderError,
   safeJsonParse,
   type Message,
@@ -9,56 +10,26 @@ import {
   type ModelResponse,
   type ModelStreamChunk,
   type ModelToolCallRequest,
-  type ReasoningEffort,
   type Usage,
 } from "@warlock.js/ai";
 import { log, type Logger } from "@warlock.js/logger";
 import type OpenAI from "openai";
-import type { OpenAIModelConfig, OpenAIResponseFormat } from "./config.type";
+import type { OpenAIModelConfig } from "./config.type";
 import { inferReasoningCapability } from "./known-reasoning-models";
 import { inferVisionCapability } from "./known-vision-models";
-import { mapFinishReason, toOpenAIMessages, toOpenAITools, wrapOpenAIError } from "./utils";
+import {
+  buildPromptCacheParams,
+  buildUsage,
+  inferStructuredOutput,
+  mapFinishReason,
+  planStructuredOutput,
+  toOpenAIMessages,
+  toOpenAIReasoningEffort,
+  toOpenAITools,
+  wrapOpenAIError,
+} from "./utils";
 
 const LOG_MODULE = "ai.openai";
-
-type OpenAIReasoningEffort = NonNullable<
-  OpenAI.Chat.Completions.ChatCompletionCreateParams["reasoning_effort"]
->;
-
-/**
- * The installed OpenAI SDK 7.23.0 declares `reasoning_effort` as
- * `none | minimal | low | medium | high | xhigh | max` in
- * `openai/src/resources/shared.ts:367`. Its type notes that model support
- * varies but does not provide a model-family-specific accepted set, so map by
- * that union alone. This exhaustive record makes a future core level a
- * typecheck failure until its OpenAI clamp is consciously selected.
- */
-const EFFORT_TO_OPENAI_EFFORT: Record<ReasoningEffort, OpenAIReasoningEffort> = {
-  none: "none",
-  minimal: "minimal",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "xhigh",
-  max: "max",
-};
-
-/**
- * Map an explicit `responseFormat` override to the default
- * `structuredOutput` capability. Loose wire modes (`"json_object"`,
- * `"text"`) don't enforce shape, so the agent needs to see the soft
- * schema hint in the system prompt — that only happens when the
- * capability is `false`. Default (no override) stays `true` to
- * preserve the prior assumption that OpenAI models support strict
- * structured output.
- */
-function inferStructuredOutput(responseFormat: OpenAIResponseFormat | undefined): boolean {
-  if (responseFormat === "json_object" || responseFormat === "text") {
-    return false;
-  }
-
-  return true;
-}
 
 /**
  * OpenAI-backed implementation of `ModelContract`.
@@ -108,6 +79,16 @@ export class OpenAIModel implements ModelContract {
   private readonly logger: Logger = log;
 
   public constructor(client: OpenAI, config: OpenAIModelConfig, provider: string = "openai") {
+    // `api: "responses"` belongs to `OpenAIResponsesModel`, which only the
+    // `OpenAISDK.model()` factory constructs. This class speaks Chat
+    // Completions only; accepting the flag here would silently ignore it.
+    if (config.api === "responses") {
+      throw new InvalidRequestError(
+        'OpenAIModel speaks Chat Completions only and cannot serve api: "responses". Use OpenAISDK.model({ api: "responses" }) on the direct OpenAI provider.',
+        { context: { provider, model: config.name, api: config.api } },
+      );
+    }
+
     this.client = client;
     this.config = config;
     this.name = config.name;
@@ -160,7 +141,7 @@ export class OpenAIModel implements ModelContract {
           model: this.name,
           messages: toOpenAIMessages(messages, this.promptCacheBreakpoints(options)),
           ...this.buildSamplingParams(options),
-          ...this.buildPromptCacheParams(),
+          ...buildPromptCacheParams(this.provider, this.config),
           tools: toOpenAITools(options?.tools),
           ...this.buildResponseFormat(options?.responseSchema),
           ...this.buildReasoningParams(options?.reasoning, Boolean(options?.tools?.length)),
@@ -235,7 +216,7 @@ export class OpenAIModel implements ModelContract {
           model: this.name,
           messages: toOpenAIMessages(messages, this.promptCacheBreakpoints(options)),
           ...this.buildSamplingParams(options),
-          ...this.buildPromptCacheParams(),
+          ...buildPromptCacheParams(this.provider, this.config),
           tools: toOpenAITools(options?.tools),
           stream: true,
           stream_options: { include_usage: true },
@@ -336,25 +317,6 @@ export class OpenAIModel implements ModelContract {
     yield { type: "done", finishReason, usage };
   }
 
-  /** OpenAI-only request fields; wrappers use the same transport but not this wire extension. */
-  private buildPromptCacheParams(): Pick<
-    OpenAI.Chat.Completions.ChatCompletionCreateParams,
-    "prompt_cache_key" | "prompt_cache_retention"
-  > {
-    if (this.provider !== "openai") {
-      return {};
-    }
-
-    return {
-      ...(this.config.promptCacheKey !== undefined
-        ? { prompt_cache_key: this.config.promptCacheKey }
-        : {}),
-      ...(this.config.promptCacheRetention !== undefined
-        ? { prompt_cache_retention: this.config.promptCacheRetention }
-        : {}),
-    };
-  }
-
   /** Map the neutral cache hint only for the direct OpenAI provider. */
   private promptCacheBreakpoints(options: ModelCallOptions | undefined): number {
     return this.provider === "openai" ? (options?.cacheControl?.breakpoints ?? 0) : 0;
@@ -362,26 +324,9 @@ export class OpenAIModel implements ModelContract {
 
   /**
    * Translate the neutral `responseSchema` option into OpenAI's
-   * `response_format` parameter.
-   *
-   * When `config.responseFormat` is set, it wins: `"text"` emits no
-   * `response_format` at all, `"json_object"` always picks the loose
-   * mode, and `"json_schema"` picks strict mode (with the same
-   * `isStrictCompatible` safety check — a malformed schema still
-   * degrades to `json_object` rather than 400). The override exists
-   * because some targets (older OpenAI models, OpenRouter routes,
-   * Ollama OpenAI-compat) reject strict `json_schema` outright.
-   *
-   * When the override is omitted, uses strict `json_schema` mode
-   * (token-level enforcement) only when the schema is a proper
-   * root-object JSON Schema (`{ type: "object", properties: ... }`).
-   * For anything else — malformed extractor output, non-object
-   * schemas, or future shapes we haven't tested — falls back to loose
-   * `json_object` mode, which guarantees *some* valid JSON without
-   * enforcing shape. The agent's soft instruction already embeds the
-   * schema text in the system prompt when the model declares no
-   * native structured-output capability, so shape validation still
-   * runs client-side via the Standard Schema `validate()` call.
+   * `response_format` parameter. The mode decision (override handling,
+   * strict-compatibility downgrade to `json_object`) lives in
+   * `planStructuredOutput`, shared with the Responses adapter.
    *
    * Returns an empty spread when no schema was supplied, so the caller
    * can unconditionally `...buildResponseFormat(...)` into the request.
@@ -389,103 +334,22 @@ export class OpenAIModel implements ModelContract {
   private buildResponseFormat(responseSchema: Record<string, unknown> | undefined): {
     response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"];
   } {
-    if (!responseSchema) {
-      return {};
-    }
+    const plan = planStructuredOutput(responseSchema, this.config.responseFormat);
 
-    const override = this.config.responseFormat;
-
-    if (override === "text") {
-      return {};
-    }
-
-    if (override === "json_object") {
-      return { response_format: { type: "json_object" } };
-    }
-
-    // Either auto-select (no override) or explicit `"json_schema"`.
-    // The strict-compat check still applies in the explicit case —
-    // a malformed / non-object schema would 400 before sampling, so
-    // we degrade to `json_object` rather than crash.
-    if (this.isStrictCompatible(responseSchema)) {
+    if (plan.mode === "json_schema") {
       return {
         response_format: {
           type: "json_schema",
-          json_schema: {
-            name: "response",
-            schema: responseSchema,
-            strict: true,
-          },
+          json_schema: { name: "response", schema: plan.schema, strict: true },
         },
       };
     }
 
-    return { response_format: { type: "json_object" } };
-  }
-
-  /**
-   * OpenAI strict `json_schema` mode requires the root to be a JSON
-   * Schema object type (`{ type: "object", properties: ... }`). Anything
-   * else (top-level arrays, primitives, unknown shapes) is rejected with
-   * a 400 before a token is sampled. We check structurally here so the
-   * first call doesn't crash on a malformed extraction — loose
-   * `json_object` mode is a safe degradation.
-   */
-  private isStrictCompatible(schema: Record<string, unknown>): boolean {
-    return (
-      schema.type === "object" &&
-      typeof schema.properties === "object" &&
-      schema.properties !== null &&
-      this.isStrictSafeNode(schema)
-    );
-  }
-
-  /**
-   * Recursively check the one strict-mode rule schemas most often trip on:
-   * every object must list ALL of its `properties` in `required` (OpenAI
-   * strict has no notion of optional — optional fields must be expressed
-   * as nullable, e.g. `type: ["string", "null"]`, and still appear in
-   * `required`). A schema that violates this anywhere in the tree is NOT
-   * sent in strict `json_schema` mode — it degrades to loose
-   * `json_object` so a hand-built or optional-bearing schema can't 400
-   * the call ("'required' ... must include every key in properties").
-   * Client-side `validate()` still enforces the full shape.
-   */
-  private isStrictSafeNode(node: unknown): boolean {
-    if (!node || typeof node !== "object") {
-      return true;
+    if (plan.mode === "json_object") {
+      return { response_format: { type: "json_object" } };
     }
 
-    const record = node as Record<string, unknown>;
-
-    if (record.type === "object" && record.properties && typeof record.properties === "object") {
-      const properties = record.properties as Record<string, unknown>;
-      const keys = Object.keys(properties);
-      const required = Array.isArray(record.required) ? (record.required as unknown[]) : [];
-
-      if (keys.some((key) => !required.includes(key))) {
-        return false;
-      }
-
-      for (const key of keys) {
-        if (!this.isStrictSafeNode(properties[key])) {
-          return false;
-        }
-      }
-    }
-
-    if (record.items !== undefined && !this.isStrictSafeNode(record.items)) {
-      return false;
-    }
-
-    for (const branch of ["anyOf", "allOf", "oneOf"] as const) {
-      const value = record[branch];
-      if (Array.isArray(value) && value.some((sub) => !this.isStrictSafeNode(sub))) {
-        return false;
-      }
-    }
-
-    return true;
+    return {};
   }
 
   /**
@@ -507,16 +371,13 @@ export class OpenAIModel implements ModelContract {
       return { input: 0, output: 0, total: 0 };
     }
 
-    const cachedTokens = raw.prompt_tokens_details?.cached_tokens;
-    const reasoningTokens = raw.completion_tokens_details?.reasoning_tokens;
-
-    return {
+    return buildUsage({
       input: raw.prompt_tokens,
       output: raw.completion_tokens,
       total: raw.total_tokens,
-      ...(cachedTokens !== undefined && cachedTokens > 0 ? { cachedTokens } : {}),
-      ...(reasoningTokens !== undefined && reasoningTokens > 0 ? { reasoningTokens } : {}),
-    };
+      cachedTokens: raw.prompt_tokens_details?.cached_tokens,
+      reasoningTokens: raw.completion_tokens_details?.reasoning_tokens,
+    });
   }
 
   /**
@@ -590,7 +451,7 @@ export class OpenAIModel implements ModelContract {
       return hasTools ? { reasoning_effort: "none" } : {};
     }
 
-    return { reasoning_effort: EFFORT_TO_OPENAI_EFFORT[reasoning.effort] };
+    return { reasoning_effort: toOpenAIReasoningEffort(reasoning.effort) };
   }
 
   /**

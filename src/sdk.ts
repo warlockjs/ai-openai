@@ -8,7 +8,7 @@ import type {
   SpeechModelContract,
   TranscriptionModelContract,
 } from "@warlock.js/ai";
-import { approximateTokenCount } from "@warlock.js/ai";
+import { InvalidRequestError, approximateTokenCount } from "@warlock.js/ai";
 import type {
   OpenAIEmbedderConfig,
   OpenAIImageConfig,
@@ -20,6 +20,7 @@ import type {
 import { OpenAIEmbedder } from "./embedder";
 import { OpenAIImageModel } from "./image";
 import { OpenAIModel } from "./model";
+import { OpenAIResponsesModel } from "./responses-model";
 import { OpenAISpeechModel } from "./speech";
 import { OpenAITranscriptionModel } from "./transcription";
 
@@ -85,11 +86,38 @@ export class OpenAISDK implements SDKAdapterContract {
    * Pricing resolution: per-model `config.pricing` wins; otherwise the
    * SDK-level registry entry keyed by `config.name`; otherwise
    * `undefined` (no cost computed).
+   *
+   * `config.api` selects the wire API. Omitted or `"chat"` builds the Chat
+   * Completions `OpenAIModel`. `"responses"` builds `OpenAIResponsesModel`
+   * and is accepted ONLY when this SDK's provider label is `"openai"`: any
+   * other label (the wrapper packages deepseek / groq / xai / mistral, or a
+   * custom gateway label) throws, so an endpoint not known to implement
+   * `/v1/responses` is never sent there.
    */
   public model(config: OpenAIModelConfig): ModelContract {
+    const api: unknown = config.api;
+
+    if (api !== undefined && api !== "chat" && api !== "responses") {
+      throw new InvalidRequestError(
+        `Unknown OpenAI api "${String(api)}"; expected "chat" or "responses".`,
+        { context: { provider: this.provider, model: config.name, api } },
+      );
+    }
+
+    if (api === "responses" && this.provider !== "openai") {
+      throw new InvalidRequestError(
+        `api: "responses" is supported only on the direct "openai" provider; this SDK is labeled "${this.provider}". Use the default api: "chat".`,
+        { context: { provider: this.provider, model: config.name, api } },
+      );
+    }
+
     const resolvedPricing = config.pricing ?? this.pricing?.[config.name];
     const resolvedConfig: OpenAIModelConfig =
       resolvedPricing === config.pricing ? config : { ...config, pricing: resolvedPricing };
+
+    if (api === "responses") {
+      return new OpenAIResponsesModel(this.client, resolvedConfig, this.provider);
+    }
 
     return new OpenAIModel(this.client, resolvedConfig, this.provider);
   }
