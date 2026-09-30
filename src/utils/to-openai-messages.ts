@@ -27,14 +27,15 @@ import type OpenAI from "openai";
  */
 export function toOpenAIMessages(
   messages: Message[],
+  cacheBreakpoints: number = 0,
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  return messages.map((m) => {
+  const mapped = messages.map((m) => {
     if (m.role === "tool") {
       return {
         role: "tool",
         content: stringifyContent(m.content),
         tool_call_id: m.toolCallId ?? "",
-      };
+      } satisfies OpenAI.Chat.Completions.ChatCompletionToolMessageParam;
     }
     if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
       return {
@@ -45,14 +46,14 @@ export function toOpenAIMessages(
           type: "function" as const,
           function: { name: tc.name, arguments: JSON.stringify(tc.input ?? {}) },
         })),
-      };
+      } satisfies OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam;
     }
 
     if (m.role === "user" && Array.isArray(m.content)) {
       return {
         role: "user",
         content: m.content.map(toOpenAIContentPart),
-      };
+      } satisfies OpenAI.Chat.Completions.ChatCompletionUserMessageParam;
     }
 
     return { role: m.role, content: stringifyContent(m.content) } as
@@ -60,6 +61,46 @@ export function toOpenAIMessages(
       | OpenAI.Chat.Completions.ChatCompletionSystemMessageParam
       | OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam;
   });
+
+  return addPromptCacheBreakpoints(mapped, cacheBreakpoints);
+}
+
+/** Place explicit markers on the last requested user-content parts (maximum four). */
+function addPromptCacheBreakpoints(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  requested: number,
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  let remaining = Math.min(4, Math.max(0, Math.floor(requested)));
+  if (remaining === 0) return messages;
+
+  const marked = [...messages];
+  for (let index = marked.length - 1; index >= 0 && remaining > 0; index--) {
+    const message = marked[index];
+    if (message.role !== "user") continue;
+
+    if (typeof message.content === "string") {
+      marked[index] = {
+        ...message,
+        content: [
+          { type: "text", text: message.content, prompt_cache_breakpoint: { mode: "explicit" } },
+        ],
+      };
+      remaining--;
+      continue;
+    }
+
+    const content = [...message.content];
+    for (let partIndex = content.length - 1; partIndex >= 0 && remaining > 0; partIndex--) {
+      content[partIndex] = {
+        ...content[partIndex],
+        prompt_cache_breakpoint: { mode: "explicit" },
+      };
+      remaining--;
+    }
+    marked[index] = { ...message, content };
+  }
+
+  return marked;
 }
 
 /**

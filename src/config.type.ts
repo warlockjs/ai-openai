@@ -6,6 +6,7 @@ import type {
   SpeechModelConfig,
   TranscriptionModelConfig,
 } from "@warlock.js/ai";
+import type OpenAI from "openai";
 import type { ClientOptions } from "openai";
 
 /**
@@ -123,6 +124,21 @@ export type OpenAIModelConfig = ModelConfig & {
    * than forwarded as an unsupported `reasoning_effort` param.
    */
   reasoning?: boolean;
+  /**
+   * Stable request bucket used by OpenAI to improve prompt-cache matching.
+   * Sent only by models whose SDK provider label is `"openai"`; compatible
+   * wrapper endpoints deliberately never receive this OpenAI-only field.
+   */
+  promptCacheKey?: string;
+  /**
+   * OpenAI's maximum prompt-cache retention policy. `"24h"` enables
+   * extended retention; `"in_memory"` keeps the cache within memory.
+   * Sent only by models whose SDK provider label is `"openai"`.
+   */
+  promptCacheRetention?: Exclude<
+    OpenAI.Chat.Completions.ChatCompletionCreateParams["prompt_cache_retention"],
+    null
+  >;
   /**
    * Opt into PDF / document **input**. Default `false` — OpenAI accepts
    * PDF `file` content parts only on specific models (the `gpt-4o`

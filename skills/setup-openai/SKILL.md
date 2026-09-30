@@ -45,7 +45,7 @@ Returns a `ModelContract` you pass straight into `ai.agent({ model })`.
 | `structuredOutput` | `true`, unless `responseFormat` is set to `"json_object"` or `"text"` (loose modes) — then `false`. |
 | `vision` | Inferred from model name. `true` for `gpt-4o*`, `gpt-4-turbo*`, `gpt-4.1*`, `o1*`, `o3*`, `chatgpt-4o*`; `false` otherwise. |
 | `reasoning` | Inferred from model name. `true` for the o-series (`o1*`, `o3*`, `o4*`) and the `gpt-5*` family; `false` otherwise. Drives whether `reasoning_effort` is forwarded. |
-| `promptCaching` | Always `true`. OpenAI caches long prompt prefixes automatically and reports hits via `usage.cachedTokens` — there are no caller-supplied write breakpoints. |
+| `promptCaching` | `true` for the direct OpenAI provider. It supports automatic cache hits plus explicit content-part write breakpoints; OpenAI-compatible wrapper providers leave the OpenAI-only fields off. |
 | `pdf` | `false` by default (opt-in `.model({ pdf: true })`). OpenAI accepts PDF `file` parts only on specific models (the `gpt-4o` family) — honest off until you set it. |
 | `audio` | `false` by default (opt-in `.model({ audio: true })`). Only the `gpt-4o-audio-preview` family accepts `input_audio`. |
 
@@ -163,7 +163,21 @@ Calling **without** `tools` is unaffected — `reasoning_effort` is still omitte
 
 Both `cachedTokens` and `reasoningTokens` are omitted (not set to `0`) when the provider reports zero, so non-reasoning / uncached calls keep the lean `{ input, output, total }` shape. Reported identically on `complete()` and the streaming `done` event.
 
-`cacheControl` write breakpoints (`ModelCallOptions.cacheControl`) are a **no-op** — OpenAI has no caller-driven cache marker on the Chat Completions wire. The read-side `cachedTokens` accounting above works without any caller action.
+### Explicit prompt caching (direct OpenAI only)
+
+Chat Completions exposes OpenAI-specific cache controls on current SDK types. Configure a stable cache bucket and (when needed) its maximum retention policy per model:
+
+```ts
+const model = openai.model({
+  name: "gpt-5.6",
+  promptCacheKey: "tenant:acme",
+  promptCacheRetention: "24h", // or "in_memory"
+});
+```
+
+`promptCacheKey` improves matching for related requests. `promptCacheRetention` is OpenAI's maximum policy (`"in_memory" | "24h"`). `cacheControl.breakpoints` maps to `prompt_cache_breakpoint: { mode: "explicit" }` on the final user content parts (up to OpenAI's four-request limit); use it when you need to pin a reusable prefix rather than rely only on OpenAI's implicit breakpoint.
+
+These fields are sent only when the SDK provider label is exactly `"openai"`. `DeepSeekSDK`, `GroqSDK`, `XaiSDK`, and `MistralSDK` label their wrapped endpoint differently, so their requests omit every OpenAI-only cache field even though they reuse this transport. Read-side `usage.cachedTokens` accounting remains available whenever the upstream reports it.
 
 ## Token counting
 

@@ -97,15 +97,10 @@ export class OpenAIModel implements ModelContract {
       // the `reasoning_effort` param. Explicit config wins over the
       // name-prefix inference.
       reasoning: config.reasoning ?? inferReasoningCapability(config.name),
-      // OpenAI prompt caching is automatic on the Chat Completions API
-      // (no caller-supplied breakpoints — the platform caches long
-      // prompt prefixes server-side and reports the hit count via
-      // `prompt_tokens_details.cached_tokens`). We therefore advertise
-      // the read-side accounting capability as always available while
-      // treating `ModelCallOptions.cacheControl` write breakpoints as a
-      // no-op (see `buildReasoningParams` siblings — there is no cache
-      // param to emit).
-      promptCaching: true,
+      // Direct OpenAI requests support automatic cache hits and explicit
+      // content-part breakpoints. Wrapper endpoints have distinct provider
+      // labels and may reject these OpenAI-only request fields.
+      promptCaching: this.provider === "openai",
       // PDF + audio INPUT are off by default — OpenAI accepts `file`
       // (PDF) and `input_audio` parts only on specific models, so the
       // flags are conservative/honest and opt-in via config rather than
@@ -140,8 +135,9 @@ export class OpenAIModel implements ModelContract {
       response = await this.client.chat.completions.create(
         {
           model: this.name,
-          messages: toOpenAIMessages(messages),
+          messages: toOpenAIMessages(messages, this.promptCacheBreakpoints(options)),
           ...this.buildSamplingParams(options),
+          ...this.buildPromptCacheParams(),
           tools: toOpenAITools(options?.tools),
           ...this.buildResponseFormat(options?.responseSchema),
           ...this.buildReasoningParams(options?.reasoning, Boolean(options?.tools?.length)),
@@ -214,8 +210,9 @@ export class OpenAIModel implements ModelContract {
       stream = await this.client.chat.completions.create(
         {
           model: this.name,
-          messages: toOpenAIMessages(messages),
+          messages: toOpenAIMessages(messages, this.promptCacheBreakpoints(options)),
           ...this.buildSamplingParams(options),
+          ...this.buildPromptCacheParams(),
           tools: toOpenAITools(options?.tools),
           stream: true,
           stream_options: { include_usage: true },
@@ -314,6 +311,30 @@ export class OpenAIModel implements ModelContract {
     });
 
     yield { type: "done", finishReason, usage };
+  }
+
+  /** OpenAI-only request fields; wrappers use the same transport but not this wire extension. */
+  private buildPromptCacheParams(): Pick<
+    OpenAI.Chat.Completions.ChatCompletionCreateParams,
+    "prompt_cache_key" | "prompt_cache_retention"
+  > {
+    if (this.provider !== "openai") {
+      return {};
+    }
+
+    return {
+      ...(this.config.promptCacheKey !== undefined
+        ? { prompt_cache_key: this.config.promptCacheKey }
+        : {}),
+      ...(this.config.promptCacheRetention !== undefined
+        ? { prompt_cache_retention: this.config.promptCacheRetention }
+        : {}),
+    };
+  }
+
+  /** Map the neutral cache hint only for the direct OpenAI provider. */
+  private promptCacheBreakpoints(options: ModelCallOptions | undefined): number {
+    return this.provider === "openai" ? (options?.cacheControl?.breakpoints ?? 0) : 0;
   }
 
   /**

@@ -436,20 +436,45 @@ describe("OpenAIModel.complete()", () => {
     expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("high");
   });
 
-
-  it("treats cacheControl as a no-op (OpenAI caches automatically, no write breakpoints)", async () => {
+  it("sends model cache settings and explicit breakpoints for OpenAI", async () => {
     const { client, calls } = makeFakeClient({ completion: baseCompletion });
-    const model = new OpenAIModel(client, { name: "gpt-4o-mini" });
-
-    await model.complete([{ role: "user", content: "hi" }], {
-      cacheControl: { breakpoints: 2 },
+    const model = new OpenAIModel(client, {
+      name: "gpt-5.6",
+      promptCacheKey: "tenant:42",
+      promptCacheRetention: "24h",
     });
 
-    // No cache_control / prompt-cache param exists on the Chat Completions
-    // wire shape — the option is accepted and silently dropped.
-    expect(calls[0].params).not.toHaveProperty("cache_control");
-    expect(calls[0].params).not.toHaveProperty("cacheControl");
+    await model.complete([{ role: "user", content: "hi" }], {
+      cacheControl: { breakpoints: 1 },
+    });
+
+    expect(calls[0].params.prompt_cache_key).toBe("tenant:42");
+    expect(calls[0].params.prompt_cache_retention).toBe("24h");
+    expect(calls[0].params.messages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi", prompt_cache_breakpoint: { mode: "explicit" } }],
+      },
+    ]);
   });
+
+  it.each(["deepseek", "groq", "xai", "mistral"])(
+    "omits OpenAI-only cache fields for the %s wrapper provider",
+    async (provider) => {
+      const { client, calls } = makeFakeClient({ completion: baseCompletion });
+      const model = new OpenAIModel(
+        client,
+        { name: "gpt-5.6", promptCacheKey: "tenant:42", promptCacheRetention: "24h" },
+        provider,
+      );
+
+      await model.complete([{ role: "user", content: "hi" }], { cacheControl: { breakpoints: 1 } });
+
+      expect(calls[0].params).not.toHaveProperty("prompt_cache_key");
+      expect(calls[0].params).not.toHaveProperty("prompt_cache_retention");
+      expect(calls[0].params.messages).toEqual([{ role: "user", content: "hi" }]);
+    },
+  );
 
   it("forwards a multipart user message (image_url) through to the wire", async () => {
     const { client, calls } = makeFakeClient({ completion: baseCompletion });
@@ -553,7 +578,7 @@ describe("OpenAIModel.complete()", () => {
                 {
                   id: "call_x",
                   type: "function",
-                  function: { name: "broken", arguments: '{not json' },
+                  function: { name: "broken", arguments: "{not json" },
                 },
               ],
             },
@@ -833,9 +858,9 @@ describe("OpenAIModel.complete()", () => {
     } as unknown as OpenAI;
     const model = new OpenAIModel(client, { name: "gpt-4o-mini" });
 
-    await expect(
-      model.complete([{ role: "user", content: "hi" }]),
-    ).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    await expect(model.complete([{ role: "user", content: "hi" }])).rejects.toMatchObject({
+      code: "PROVIDER_ERROR",
+    });
   });
 
   it("wraps a 401 failure into a ProviderAuthError, preserving context", async () => {
@@ -882,9 +907,9 @@ describe("OpenAIModel construction + capabilities", () => {
   });
 
   it("honors an explicit vision override over inference", () => {
-    expect(new OpenAIModel(stubClient, { name: "gpt-3.5-turbo", vision: true }).capabilities.vision).toBe(
-      true,
-    );
+    expect(
+      new OpenAIModel(stubClient, { name: "gpt-3.5-turbo", vision: true }).capabilities.vision,
+    ).toBe(true);
     expect(new OpenAIModel(stubClient, { name: "gpt-4o", vision: false }).capabilities.vision).toBe(
       false,
     );
@@ -898,8 +923,8 @@ describe("OpenAIModel construction + capabilities", () => {
 
   it("downgrades structuredOutput to false when responseFormat is a loose mode", () => {
     expect(
-      new OpenAIModel(stubClient, { name: "gpt-4o-mini", responseFormat: "json_object" }).capabilities
-        .structuredOutput,
+      new OpenAIModel(stubClient, { name: "gpt-4o-mini", responseFormat: "json_object" })
+        .capabilities.structuredOutput,
     ).toBe(false);
     expect(
       new OpenAIModel(stubClient, { name: "gpt-4o-mini", responseFormat: "text" }).capabilities
@@ -909,8 +934,8 @@ describe("OpenAIModel construction + capabilities", () => {
 
   it("keeps structuredOutput true when responseFormat is the strict json_schema mode", () => {
     expect(
-      new OpenAIModel(stubClient, { name: "gpt-4o-mini", responseFormat: "json_schema" }).capabilities
-        .structuredOutput,
+      new OpenAIModel(stubClient, { name: "gpt-4o-mini", responseFormat: "json_schema" })
+        .capabilities.structuredOutput,
     ).toBe(true);
   });
 
@@ -990,7 +1015,10 @@ describe("OpenAIModel.stream()", () => {
       streamChunks: [
         chunk({ delta: { content: "Hello" } }),
         chunk({ delta: { content: " world" } }),
-        chunk({ finish: "stop", usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }),
+        chunk({
+          finish: "stop",
+          usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+        }),
       ],
     });
     const model = new OpenAIModel(client, { name: "gpt-4o-mini" });
@@ -1007,7 +1035,10 @@ describe("OpenAIModel.stream()", () => {
     const { client } = makeFakeClient({
       streamChunks: [
         chunk({ delta: { content: "x" } }),
-        chunk({ finish: "stop", usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 } }),
+        chunk({
+          finish: "stop",
+          usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
+        }),
       ],
     });
     const model = new OpenAIModel(client, { name: "gpt-4o-mini" });
@@ -1101,9 +1132,7 @@ describe("OpenAIModel.stream()", () => {
       streamChunks: [
         chunk({
           delta: {
-            tool_calls: [
-              { index: 0, function: { arguments: '{"partial":' } },
-            ],
+            tool_calls: [{ index: 0, function: { arguments: '{"partial":' } }],
           },
         }),
         chunk({ finish: "tool_calls" }),
@@ -1140,7 +1169,11 @@ describe("OpenAIModel.stream()", () => {
     const { client, calls } = makeFakeClient({
       streamChunks: [chunk({ finish: "stop" })],
     });
-    const model = new OpenAIModel(client, { name: "gpt-5.6-luna", temperature: 0.3, maxTokens: 300 });
+    const model = new OpenAIModel(client, {
+      name: "gpt-5.6-luna",
+      temperature: 0.3,
+      maxTokens: 300,
+    });
 
     for await (const _event of model.stream([{ role: "user", content: "hi" }])) {
       // drain
@@ -1173,9 +1206,7 @@ describe("OpenAIModel.stream()", () => {
       }
     }
 
-    expect(toolEvents).toEqual([
-      { id: "call_a", name: "getWeather", input: { city: "Cairo" } },
-    ]);
+    expect(toolEvents).toEqual([{ id: "call_a", name: "getWeather", input: { city: "Cairo" } }]);
   });
 
   it("accumulates two parallel tool calls keyed by their delta index", async () => {
@@ -1323,7 +1354,8 @@ describe("OpenAIModel.stream()", () => {
     });
     const model = new OpenAIModel(client, { name: "o3-mini" });
 
-    let final: { input: number; output: number; total: number; reasoningTokens?: number } | undefined;
+    let final:
+      { input: number; output: number; total: number; reasoningTokens?: number } | undefined;
     for await (const event of model.stream([{ role: "user", content: "hi" }])) {
       if (event.type === "done") final = event.usage;
     }
