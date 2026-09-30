@@ -157,6 +157,14 @@ await model.complete(messages, { tools, reasoning: { effort: "high" } }); // you
 await model.complete(messages, { tools, reasoning: { effort: "none" } }); // same effect as the default, explicit
 ```
 
+The gpt-6 models (`gpt-6-astra` / `gpt-6-sol` / `gpt-6-luna`) are hard-400 cases, verified live on `gpt-6-sol`:
+
+```
+400 Function tools with reasoning_effort are not supported for gpt-6-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.
+```
+
+Tools work with reasoning off (the adapter's default when tools are present and no reasoning is set). Responses API support, planned for 5.27, lifts this.
+
 Calling **without** `tools` is unaffected — `reasoning_effort` is still omitted by default in that case (provider default reasoning, nothing to unblock). Trade-off of the `"none"` default: you lose reasoning on that call. For tool-heavy agent work (function calls + good replies rather than deep analysis) this is the right call — it's the difference between empty replies and working ones. When you need reasoning **and** tools together, use the Responses API (planned).
 
 ## Token usage — what's reported
