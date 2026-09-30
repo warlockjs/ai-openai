@@ -25,7 +25,7 @@
     "url": "https://github.com/warlockjs/ai-openai"
   },
   "dependencies": {
-    "openai": "^7.4.0",
+    "openai": "^7.23.0",
     "@warlock.js/logger": "workspace:^"
   },
   "devDependencies": {
