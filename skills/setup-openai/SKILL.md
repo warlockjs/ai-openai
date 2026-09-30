@@ -1,6 +1,6 @@
 ---
 name: setup-openai
-description: 'Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?, pdf?, audio?}) for ModelContract, .embedder({name, dimensions?}) for embeddings, .image({name, pricing?}) for gpt-image-*/dall-e-* image generation (via ai.image). PDF input maps to OpenAI file parts (opt-in pdf:true), audio input to input_audio (opt-in audio:true). Triggers: `OpenAISDK`, `.model`, `.embedder`, `.image`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, `gpt-image`, `dall-e`, `ai.image`, `pdf input`, `input_audio`, o-series / gpt-5 reasoning, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock", "generate images with gpt-image / dall-e", "send a pdf / audio to gpt-4o"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: the ai.image verb surface — `@warlock.js/ai/generate-images/SKILL.md`; agent wiring — `@warlock.js/ai/run-ai-agent/SKILL.md`; adapter comparison — `@warlock.js/ai/pick-ai-provider/SKILL.md`; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.'
+description: 'Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?, pdf?, audio?}) for ModelContract, .embedder({name, dimensions?}) for embeddings, .image({name, pricing?}) for gpt-image-*/dall-e-* image generation (via ai.image). PDF input maps to OpenAI file parts (opt-in pdf:true), audio input to input_audio (opt-in audio:true). Triggers: `OpenAISDK`, `.model`, `.embedder`, `.image`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, `gpt-image`, `dall-e`, `ai.image`, `pdf input`, `input_audio`, o-series / gpt-5 reasoning, `api: "responses"`, Responses API, reasoning with tools, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock", "generate images with gpt-image / dall-e", "send a pdf / audio to gpt-4o"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: the ai.image verb surface — `@warlock.js/ai/generate-images/SKILL.md`; agent wiring — `@warlock.js/ai/run-ai-agent/SKILL.md`; adapter comparison — `@warlock.js/ai/pick-ai-provider/SKILL.md`; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.'
 ---
 
 # `@warlock.js/ai-openai`
@@ -155,9 +155,26 @@ The gpt-6 models (`gpt-6-astra` / `gpt-6-sol` / `gpt-6-luna`) are hard-400 cases
 400 Function tools with reasoning_effort are not supported for gpt-6-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.
 ```
 
-Tools work with reasoning off (the adapter's default when tools are present and no reasoning is set). Responses API support, planned for 5.27, lifts this.
+Tools work with reasoning off (the adapter's default when tools are present and no reasoning is set). For reasoning **and** tools together, use the Responses API below.
 
-Calling **without** `tools` is unaffected — `reasoning_effort` is still omitted by default in that case (provider default reasoning, nothing to unblock). Trade-off of the `"none"` default: you lose reasoning on that call. For tool-heavy agent work (function calls + good replies rather than deep analysis) this is the right call — it's the difference between empty replies and working ones. When you need reasoning **and** tools together, use the Responses API (planned).
+Calling **without** `tools` is unaffected — `reasoning_effort` is still omitted by default in that case (provider default reasoning, nothing to unblock). Trade-off of the `"none"` default: you lose reasoning on that call. For tool-heavy agent work (function calls + good replies rather than deep analysis) this is the right call — it's the difference between empty replies and working ones. When you need reasoning **and** tools together, use the Responses API (next section).
+
+### Reasoning + tools: the Responses API (`api: "responses"`)
+
+Opt a direct-OpenAI model into `/v1/responses`, where reasoning models accept function tools with reasoning on:
+
+```ts
+const model = openai.model({ name: "gpt-6-sol", api: "responses" });
+await model.complete(messages, { tools, reasoning: { effort: "high" } }); // reasoning stays on, tools work
+```
+
+- Chat Completions stays the default; nothing changes unless you pass `api: "responses"`.
+- Only the direct `openai` provider accepts it. `@warlock.js/ai-deepseek`, `ai-groq`, `ai-xai` and `ai-mistral` (which reuse this adapter with their own `baseURL`) reject `api: "responses"` with `InvalidRequestError`.
+- With tools attached, reasoning uses the provider default instead of being forced to `"none"`: expect more reasoning tokens and latency than the Chat path. Pass `reasoning: { effort }` to choose.
+- The system prompt is sent as `instructions`; requests use `store: false` (no server-side conversation state).
+- Reasoning is carried across a tool loop without server storage: each response asks for encrypted reasoning, which rides on the first tool call of the turn (`providerMetadata.openaiResponses`) and is sent back on the next request when the model is the same. It is persisted with your conversation history.
+- `complete()` and `stream()` both work; streamed chunks follow the same order as the Chat path (deltas, then tool calls, then `done`). Usage reports `reasoningTokens` and `cachedTokens` the same way.
+- `pdf` and `audio` inputs are not available on this path.
 
 ## Token usage — what's reported
 
