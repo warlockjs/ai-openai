@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `reasoning.effort` now accepts every OpenAI SDK 7.23.0 `reasoning_effort` level: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 - OpenAI-labelled Chat Completions models now support explicit prompt caching: `promptCacheKey`, `promptCacheRetention`, and `cacheControl.breakpoints` map to the OpenAI SDK's request fields. These fields are deliberately omitted for OpenAI-compatible wrapper providers.
 - Capability inference now recognizes the GPT-6 family as reasoning- and vision-capable, plus GPT-5 and o4 as vision-capable.
 - **Behaviour change:** requests send `max_completion_tokens` and never the legacy `max_tokens`, which current OpenAI models (the gpt-5 family and later) reject with `400 unsupported_parameter`. `maxTokens` in config and call options is unchanged.

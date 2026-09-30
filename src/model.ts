@@ -9,6 +9,7 @@ import {
   type ModelResponse,
   type ModelStreamChunk,
   type ModelToolCallRequest,
+  type ReasoningEffort,
   type Usage,
 } from "@warlock.js/ai";
 import { log, type Logger } from "@warlock.js/logger";
@@ -19,6 +20,28 @@ import { inferVisionCapability } from "./known-vision-models";
 import { mapFinishReason, toOpenAIMessages, toOpenAITools, wrapOpenAIError } from "./utils";
 
 const LOG_MODULE = "ai.openai";
+
+type OpenAIReasoningEffort = NonNullable<
+  OpenAI.Chat.Completions.ChatCompletionCreateParams["reasoning_effort"]
+>;
+
+/**
+ * The installed OpenAI SDK 7.23.0 declares `reasoning_effort` as
+ * `none | minimal | low | medium | high | xhigh | max` in
+ * `openai/src/resources/shared.ts:367`. Its type notes that model support
+ * varies but does not provide a model-family-specific accepted set, so map by
+ * that union alone. This exhaustive record makes a future core level a
+ * typecheck failure until its OpenAI clamp is consciously selected.
+ */
+const EFFORT_TO_OPENAI_EFFORT: Record<ReasoningEffort, OpenAIReasoningEffort> = {
+  none: "none",
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
+};
 
 /**
  * Map an explicit `responseFormat` override to the default
@@ -567,7 +590,7 @@ export class OpenAIModel implements ModelContract {
       return hasTools ? { reasoning_effort: "none" } : {};
     }
 
-    return { reasoning_effort: reasoning.effort };
+    return { reasoning_effort: EFFORT_TO_OPENAI_EFFORT[reasoning.effort] };
   }
 
   /**

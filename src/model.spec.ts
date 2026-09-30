@@ -298,6 +298,23 @@ describe("OpenAIModel.complete()", () => {
     expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("high");
   });
 
+  it.each([
+    ["minimal", "minimal"],
+    ["xhigh", "xhigh"],
+    ["max", "max"],
+    ["none", "none"],
+    ["low", "low"],
+    ["medium", "medium"],
+    ["high", "high"],
+  ] as const)("maps reasoning effort %s to OpenAI %s", async (effort, expected) => {
+    const { client, calls } = makeFakeClient({ completion: baseCompletion });
+    const model = new OpenAIModel(client, { name: "o3-mini" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort } });
+
+    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe(expected);
+  });
+
   it("does NOT forward reasoning_effort for a non-reasoning model", async () => {
     const { client, calls } = makeFakeClient({ completion: baseCompletion });
     const model = new OpenAIModel(client, { name: "gpt-4o" });
