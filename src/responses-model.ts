@@ -1,5 +1,6 @@
 import {
   InvalidRequestError,
+  ProviderError,
   safeJsonParse,
   type Message,
   type ModelCallOptions,
@@ -17,6 +18,7 @@ import type { OpenAIModelConfig } from "./config.type";
 import { inferReasoningCapability } from "./known-reasoning-models";
 import { inferVisionCapability } from "./known-vision-models";
 import {
+  attachReasoningReplay,
   buildPromptCacheParams,
   buildUsage,
   inferStructuredOutput,
@@ -50,11 +52,16 @@ const LOG_MODULE = "ai.openai";
  * server and no `previous_response_id` is used. Full history is re-sent each
  * call, exactly like the Chat path.
  *
- * **Scope of this class.** `complete()` is implemented. `stream()` throws a
- * clear "not implemented yet" error until the streaming translator lands.
- * Reasoning-item replay across tool turns is not implemented yet either:
- * without it the model cannot reuse its own reasoning on the next tool turn
- * (quality, not correctness).
+ * **Reasoning replay.** Every request asks for
+ * `include: ["reasoning.encrypted_content"]`. The `reasoning` items of a
+ * tool-calling turn are stored on the FIRST tool call as
+ * `providerMetadata.openaiResponses = { model, reasoningItems }` and sent back
+ * before that turn's `function_call` items on the next request (only when the
+ * stored model equals the current one). Text-only turns are not replayed.
+ *
+ * **Streaming.** `stream()` uses `responses.create({ stream: true })` and yields
+ * the same chunk sequence as the Chat path: text `delta`s, then the
+ * `tool-call`s, then one `done`.
  */
 export class OpenAIResponsesModel implements ModelContract {
   public readonly name: string;
@@ -143,25 +150,124 @@ export class OpenAIResponsesModel implements ModelContract {
   }
 
   /**
-   * Streaming is not implemented for `api: "responses"` yet; it lands with
-   * the streaming translator. Fails on the first iteration with a typed
-   * error so a caller that streams by default gets a clear message.
+   * Incremental streaming completion via `responses.create({ stream: true })`
+   * (the SDK's `Stream<ResponseStreamEvent>`, `responses.d.ts:55`). Yields the
+   * same neutral `ModelStreamChunk` sequence as the Chat path:
+   *
+   * - `response.output_text.delta` / `response.refusal.delta` -> `delta`.
+   * - `response.output_item.done` with a completed `function_call` item ->
+   *   buffered; `reasoning` items are captured for replay. The `done` copy is
+   *   used because the `added` copy may be incomplete (`responses.d.ts:5711`).
+   * - After the loop: the buffered `tool-call`s (the first carries the
+   *   replay metadata), then a single `done` with the finish reason and usage
+   *   from `response.completed` / `response.incomplete`.
+   * - `response.failed` and `error` events throw a typed `AIError`; a stream
+   *   that ends with no terminal event throws `ProviderError`.
+   * - Abort goes through the request `signal`; the SDK rejects the read and
+   *   the error is wrapped like any other.
    */
   public async *stream(
-    _messages: Message[],
-    _options?: ModelCallOptions,
+    messages: Message[],
+    options?: ModelCallOptions,
   ): AsyncIterable<ModelStreamChunk> {
-    throw new InvalidRequestError(
-      'Streaming for api: "responses" is not implemented yet and lands next. Use complete(), or the default api: "chat" for streaming.',
-      { context: { provider: this.provider, model: this.name, api: "responses" } },
-    );
+    this.logger.debug(LOG_MODULE, "request", "Starting streaming call to responses.create", {
+      model: this.name,
+      messageCount: messages.length,
+      streaming: true,
+      toolCount: options?.tools?.length ?? 0,
+    });
+
+    let events: AsyncIterable<OpenAI.Responses.ResponseStreamEvent>;
+
+    try {
+      events = await this.client.responses.create(
+        { ...this.buildRequest(messages, options), stream: true },
+        options?.signal ? { signal: options.signal } : undefined,
+      );
+    } catch (thrown) {
+      throw this.logAndWrap(thrown);
+    }
+
+    const toolCalls: ModelToolCallRequest[] = [];
+    const reasoningItems: OpenAI.Responses.ResponseReasoningItem[] = [];
+    let terminal: OpenAI.Responses.Response | undefined;
+
+    try {
+      for await (const event of events) {
+        if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
+          if (event.delta) {
+            yield { type: "delta", content: event.delta };
+          }
+
+          continue;
+        }
+
+        if (event.type === "response.output_item.done") {
+          const { item } = event;
+
+          if (item.type === "reasoning") {
+            reasoningItems.push(item);
+          } else if (item.type === "function_call" && item.status !== "incomplete") {
+            toolCalls.push(this.toToolCall(item));
+          }
+
+          continue;
+        }
+
+        if (event.type === "response.completed" || event.type === "response.incomplete") {
+          terminal = event.response;
+          continue;
+        }
+
+        if (event.type === "response.failed") {
+          throw toResponseFailure(event.response, this.name);
+        }
+
+        if (event.type === "error") {
+          throw wrapOpenAIError({ code: event.code, message: event.message, param: event.param });
+        }
+      }
+
+      if (terminal === undefined) {
+        throw new ProviderError("OpenAI Responses stream ended before response.completed.", {
+          context: { provider: this.provider, model: this.name },
+        });
+      }
+    } catch (thrown) {
+      throw this.logAndWrap(thrown);
+    }
+
+    for (const call of attachReasoningReplay(toolCalls, this.name, reasoningItems)) {
+      yield {
+        type: "tool-call",
+        id: call.id,
+        name: call.name,
+        input: call.input,
+        ...(call.providerMetadata ? { providerMetadata: call.providerMetadata } : {}),
+      };
+    }
+
+    const finishReason = mapResponsesFinishReason({
+      status: terminal.status,
+      incomplete_details: terminal.incomplete_details,
+      hasToolCalls: toolCalls.length > 0,
+    });
+    const usage = this.extractUsage(terminal.usage);
+
+    this.logger.debug(LOG_MODULE, "response", "Streaming call to responses.create succeeded", {
+      finishReason,
+      usage,
+    });
+
+    yield { type: "done", finishReason, usage };
   }
 
   /**
    * Assemble the `responses.create` body.
    *
    * - System prompt -> `instructions`; history -> `input` items.
-   * - `store: false` always (the API default is `true` when omitted).
+   * - `store: false` always (the API default is `true` when omitted), plus
+   *   `include: ["reasoning.encrypted_content"]` for stateless reasoning replay.
    * - `max_output_tokens` caps reasoning and visible output together.
    * - `temperature` only for non-reasoning models (same rule as Chat).
    * - `tools` flat with `strict: false`; `tool_choice` only with tools.
@@ -173,7 +279,7 @@ export class OpenAIResponsesModel implements ModelContract {
     messages: Message[],
     options: ModelCallOptions | undefined,
   ): OpenAI.Responses.ResponseCreateParamsNonStreaming {
-    const { instructions, input } = toResponsesInput(messages);
+    const { instructions, input } = toResponsesInput(messages, this.name);
     const tools = toResponsesTools(options?.tools);
     const toolChoice = tools ? toResponsesToolChoice(options?.toolChoice) : undefined;
     const maxTokens = options?.maxTokens ?? this.config.maxTokens;
@@ -184,6 +290,9 @@ export class OpenAIResponsesModel implements ModelContract {
       ...(instructions !== undefined ? { instructions } : {}),
       input,
       store: false,
+      // Stateless replay: ask for the encrypted reasoning blobs so they can be
+      // sent back on the next tool turn (decision 3).
+      include: ["reasoning.encrypted_content"],
       ...(maxTokens !== undefined ? { max_output_tokens: maxTokens } : {}),
       ...(!this.capabilities.reasoning && temperature !== undefined ? { temperature } : {}),
       ...(tools ? { tools } : {}),
@@ -234,8 +343,10 @@ export class OpenAIResponsesModel implements ModelContract {
    * text and any `refusal` text (surfaced as ordinary content, decision 5);
    * each completed `function_call` item becomes one tool call with
    * `id = call_id`. `reasoning` items carry no visible content and are
-   * ignored here. A `function_call` the API marked `incomplete` (truncated
+   * not content. A `function_call` the API marked `incomplete` (truncated
    * arguments) is skipped rather than dispatched with empty input.
+   * `reasoning` items are captured and attached to the first tool call for
+   * replay (see `attachReasoningReplay`).
    */
   private readOutput(output: OpenAI.Responses.ResponseOutputItem[]): {
     content: string;
@@ -243,8 +354,14 @@ export class OpenAIResponsesModel implements ModelContract {
   } {
     let content = "";
     const toolCalls: ModelToolCallRequest[] = [];
+    const reasoningItems: OpenAI.Responses.ResponseReasoningItem[] = [];
 
     for (const item of output) {
+      if (item.type === "reasoning") {
+        reasoningItems.push(item);
+        continue;
+      }
+
       if (item.type === "message") {
         for (const part of item.content) {
           content += part.type === "refusal" ? part.refusal : part.text;
@@ -254,15 +371,26 @@ export class OpenAIResponsesModel implements ModelContract {
       }
 
       if (item.type === "function_call" && item.status !== "incomplete") {
-        toolCalls.push({
-          id: item.call_id,
-          name: item.name,
-          input: safeJsonParse<Record<string, unknown>>(item.arguments, {}),
-        });
+        toolCalls.push(this.toToolCall(item));
       }
     }
 
-    return { content, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+    return {
+      content,
+      toolCalls:
+        toolCalls.length > 0
+          ? attachReasoningReplay(toolCalls, this.name, reasoningItems)
+          : undefined,
+    };
+  }
+
+  /** One completed `function_call` item as a neutral tool call (`call_id` -> `id`). */
+  private toToolCall(item: OpenAI.Responses.ResponseFunctionToolCall): ModelToolCallRequest {
+    return {
+      id: item.call_id,
+      name: item.name,
+      input: safeJsonParse<Record<string, unknown>>(item.arguments, {}),
+    };
   }
 
   /**

@@ -12,6 +12,15 @@ export {
   planStructuredOutput,
   type StructuredOutputPlan,
 } from "./structured-output";
+export {
+  attachReasoningReplay,
+  pickReplayableReasoning,
+  readReasoningReplay,
+  RESPONSES_METADATA_KEY,
+  toReplayReasoningItem,
+  type ResponsesReasoningItem,
+  type ResponsesReplayMetadata,
+} from "./reasoning-replay";
 export { toOpenAIMessages } from "./to-openai-messages";
 export { toOpenAITools } from "./to-openai-tools";
 export {

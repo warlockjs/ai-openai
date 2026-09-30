@@ -1,6 +1,7 @@
 import { InvalidRequestError, type ContentPart, type Message } from "@warlock.js/ai";
 import type OpenAI from "openai";
 import { stringifyContent, toImageUrl } from "./to-openai-messages";
+import { readReasoningReplay, toReplayReasoningItem } from "./reasoning-replay";
 
 /** One item of the Responses `input` array. */
 export type ResponsesInputItem = OpenAI.Responses.ResponseInputItem;
@@ -26,6 +27,11 @@ export type ResponsesInputPlan = {
  *   non-empty) followed by one top-level `function_call` item per call; our
  *   `ModelToolCallRequest.id` is the wire `call_id`. No item `id` is sent:
  *   with `store: false` nothing was persisted for it to refer to.
+ * - When `model` is given, reasoning items stored on the turn's tool calls
+ *   (`providerMetadata.openaiResponses`, see `reasoning-replay.ts`) are
+ *   emitted BEFORE the turn's text and `function_call` items (the order the
+ *   API produced them), only if they were produced by that same model.
+ *   Without `model` nothing is replayed.
  * - A `tool` message becomes a top-level `function_call_output` item.
  *
  * PDF and audio parts are rejected with a typed `InvalidRequestError`: the
@@ -39,7 +45,7 @@ export type ResponsesInputPlan = {
  * ]);
  * // { instructions: "Be brief.", input: [{ role: "user", content: "Hi" }] }
  */
-export function toResponsesInput(messages: Message[]): ResponsesInputPlan {
+export function toResponsesInput(messages: Message[], model?: string): ResponsesInputPlan {
   const input: ResponsesInputItem[] = [];
   let instructions: string | undefined;
   let instructionsTaken = false;
@@ -69,6 +75,12 @@ export function toResponsesInput(messages: Message[]): ResponsesInputPlan {
 
     if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
       const text = stringifyContent(message.content);
+
+      if (model !== undefined) {
+        for (const item of readReasoningReplay(message.toolCalls, model)) {
+          input.push(toReplayReasoningItem(item));
+        }
+      }
 
       if (text !== "") {
         input.push({ role: "assistant", content: text });

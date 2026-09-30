@@ -4,9 +4,11 @@ import {
   ProviderError,
   ProviderRateLimitError,
   type Message,
+  type ModelStreamChunk,
   type ToolConfig,
 } from "@warlock.js/ai";
 import type OpenAI from "openai";
+import OpenAIClient from "openai";
 import { describe, expect, it } from "vitest";
 import { OpenAIModel } from "./model";
 import { OpenAIResponsesModel } from "./responses-model";
@@ -26,7 +28,14 @@ function firstParams(calls: readonly Params[]): Params {
  * request options it was called with and returns a scripted response (or
  * throws a scripted error). No network.
  */
-function makeFakeClient(options: { response?: ResponseFixture; error?: unknown }) {
+function makeFakeClient(options: {
+  response?: ResponseFixture;
+  error?: unknown;
+  /** Scripted events yielded when the request has `stream: true`. */
+  events?: OpenAI.Responses.ResponseStreamEvent[];
+  /** Thrown from the event stream after the scripted events were yielded. */
+  streamError?: unknown;
+}) {
   const calls: Params[] = [];
   const requestOptions: unknown[] = [];
 
@@ -36,6 +45,18 @@ function makeFakeClient(options: { response?: ResponseFixture; error?: unknown }
 
     if (options.error !== undefined) {
       throw options.error;
+    }
+
+    if ((params as { stream?: boolean | null }).stream === true) {
+      return (async function* () {
+        for (const event of options.events ?? []) {
+          yield event;
+        }
+
+        if (options.streamError !== undefined) {
+          throw options.streamError;
+        }
+      })();
     }
 
     return options.response;
@@ -125,6 +146,7 @@ describe("OpenAIResponsesModel request shape", () => {
       model: "gpt-4o-mini",
       input: [{ role: "user", content: "hi" }],
       store: false,
+      include: ["reasoning.encrypted_content"],
     });
     expect(params).not.toHaveProperty("messages");
     expect(params).not.toHaveProperty("max_completion_tokens");
@@ -191,6 +213,7 @@ describe("OpenAIResponsesModel request shape", () => {
         { type: "function_call_output", call_id: "call_1", output: '{"temp":82}' },
       ],
       store: false,
+      include: ["reasoning.encrypted_content"],
       max_output_tokens: 2000,
       tools: [
         {
@@ -827,19 +850,690 @@ describe("OpenAIResponsesModel errors", () => {
   });
 });
 
-describe("OpenAIResponsesModel.stream()", () => {
-  it("throws a clear 'lands next' error and never calls the API", async () => {
-    const { client, calls } = makeFakeClient({ response: makeResponse() });
-    const model = new OpenAIResponsesModel(client, { name: "gpt-5.6" });
 
-    const consume = async () => {
-      for await (const _chunk of model.stream(userHi)) {
-        // never reached
-      }
+// ---------------------------------------------------------------------------
+// Encrypted reasoning replay (card 3)
+// ---------------------------------------------------------------------------
+
+function reasoningItem(
+  overrides: Partial<OpenAI.Responses.ResponseReasoningItem> = {},
+): OpenAI.Responses.ResponseReasoningItem {
+  return {
+    id: "rs_1",
+    type: "reasoning",
+    summary: [{ type: "summary_text", text: "thinking" }],
+    encrypted_content: "ENC_1",
+    status: "completed",
+    ...overrides,
+  };
+}
+
+/** The item as it is replayed: response-only `status` dropped. */
+function replayedReasoning(id = "rs_1", encrypted = "ENC_1") {
+  return {
+    type: "reasoning",
+    id,
+    summary: [{ type: "summary_text", text: "thinking" }],
+    encrypted_content: encrypted,
+  };
+}
+
+describe("OpenAIResponsesModel reasoning replay", () => {
+  it("attaches the turn's reasoning items to the FIRST tool call only", async () => {
+    const { client } = makeFakeClient({
+      response: makeResponse({
+        output: [
+          reasoningItem(),
+          functionCall({ call_id: "c1", name: "a", arguments: "{}" }),
+          functionCall({ call_id: "c2", name: "b", arguments: "{}" }),
+        ],
+      }),
+    });
+
+    const result = await new OpenAIResponsesModel(client, { name: "gpt-5.6" }).complete(userHi);
+
+    expect(result.toolCalls?.[0]?.providerMetadata).toEqual({
+      openaiResponses: { model: "gpt-5.6", reasoningItems: [reasoningItem()] },
+    });
+    expect(result.toolCalls?.[1]).not.toHaveProperty("providerMetadata");
+  });
+
+  it("round-trips: response -> history message -> next request has the reasoning before the function_call", async () => {
+    const { client, calls } = makeFakeClient({
+      response: makeResponse({
+        output: [
+          reasoningItem(),
+          functionCall({ call_id: "call_1", name: "getWeather", arguments: '{"city":"Cairo"}' }),
+        ],
+      }),
+    });
+    const model = new OpenAIResponsesModel(client, { name: "gpt-5.6" });
+    const first = await model.complete(userHi, { tools: [weatherTool()] });
+
+    // What the agent does: store the assistant turn verbatim, then the tool result.
+    const history: Message[] = [
+      ...userHi,
+      { role: "assistant", content: first.content, toolCalls: first.toolCalls },
+      { role: "tool", toolCallId: "call_1", content: '{"temp":82}' },
+    ];
+
+    await model.complete(history, { tools: [weatherTool()] });
+
+    const second = calls[1];
+    expect(second?.include).toEqual(["reasoning.encrypted_content"]);
+    expect(second?.store).toBe(false);
+    expect(second?.input).toEqual([
+      { role: "user", content: "hi" },
+      replayedReasoning(),
+      {
+        type: "function_call",
+        call_id: "call_1",
+        name: "getWeather",
+        arguments: '{"city":"Cairo"}',
+      },
+      { type: "function_call_output", call_id: "call_1", output: '{"temp":82}' },
+    ]);
+  });
+
+  it("emits the reasoning before the turn's text and function_call items (API output order)", async () => {
+    const { client, calls } = makeFakeClient({ response: makeResponse() });
+
+    await new OpenAIResponsesModel(client, { name: "gpt-5.6" }).complete([
+      ...userHi,
+      {
+        role: "assistant",
+        content: "Checking.",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "a",
+            input: {},
+            providerMetadata: {
+              openaiResponses: { model: "gpt-5.6", reasoningItems: [reasoningItem()] },
+            },
+          },
+          { id: "call_2", name: "b", input: {} },
+        ],
+      },
+    ]);
+
+    expect(firstParams(calls).input).toEqual([
+      { role: "user", content: "hi" },
+      replayedReasoning(),
+      { role: "assistant", content: "Checking." },
+      { type: "function_call", call_id: "call_1", name: "a", arguments: "{}" },
+      { type: "function_call", call_id: "call_2", name: "b", arguments: "{}" },
+    ]);
+  });
+
+  it("skips replay when the stored model differs from the current model", async () => {
+    const { client, calls } = makeFakeClient({ response: makeResponse() });
+    const history: Message[] = [
+      ...userHi,
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "a",
+            input: {},
+            providerMetadata: {
+              openaiResponses: { model: "gpt-5.5", reasoningItems: [reasoningItem()] },
+            },
+          },
+        ],
+      },
+      { role: "tool", toolCallId: "call_1", content: "ok" },
+    ];
+
+    await new OpenAIResponsesModel(client, { name: "gpt-5.6" }).complete(history);
+
+    expect(firstParams(calls).input).toEqual([
+      { role: "user", content: "hi" },
+      { type: "function_call", call_id: "call_1", name: "a", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+    ]);
+  });
+
+  it("does not attach items without encrypted_content (nothing to restore with store:false)", async () => {
+    const { client } = makeFakeClient({
+      response: makeResponse({
+        output: [
+          reasoningItem({ encrypted_content: null }),
+          functionCall({ call_id: "c1", name: "a", arguments: "{}" }),
+        ],
+      }),
+    });
+
+    const result = await new OpenAIResponsesModel(client, { name: "gpt-5.6" }).complete(userHi);
+
+    expect(result.toolCalls?.[0]).not.toHaveProperty("providerMetadata");
+  });
+
+  it("does not replay reasoning from a text-only turn (no tool call to carry it)", async () => {
+    const { client } = makeFakeClient({
+      response: makeResponse({ output: [reasoningItem(), textMessage("Done.")] }),
+    });
+
+    const result = await new OpenAIResponsesModel(client, { name: "gpt-5.6" }).complete(userHi);
+
+    expect(result.content).toBe("Done.");
+    expect(result).not.toHaveProperty("toolCalls");
+  });
+
+  it("ignores malformed stored metadata and de-duplicates items by id", async () => {
+    const { client, calls } = makeFakeClient({ response: makeResponse() });
+    const stored = { model: "gpt-5.6", reasoningItems: [reasoningItem(), reasoningItem()] };
+
+    await new OpenAIResponsesModel(client, { name: "gpt-5.6" }).complete([
+      ...userHi,
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "c1", name: "a", input: {}, providerMetadata: { openaiResponses: stored } },
+          { id: "c2", name: "b", input: {}, providerMetadata: { openaiResponses: "garbage" } },
+          { id: "c3", name: "c", input: {}, providerMetadata: { openaiResponses: { model: 5 } } },
+        ],
+      },
+    ]);
+
+    const replayed = (firstParams(calls).input as Array<{ type?: string }>).filter(
+      (item) => item.type === "reasoning",
+    );
+    expect(replayed).toEqual([replayedReasoning()]);
+  });
+
+  describe("other adapters ignore the key", () => {
+    const chatReply = {
+      id: "x",
+      object: "chat.completion",
+      created: 0,
+      model: "gpt-4o-mini",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "ok", refusal: null },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     };
 
-    await expect(consume()).rejects.toThrow(/Streaming for api: "responses" is not implemented yet/);
-    await expect(consume()).rejects.toBeInstanceOf(InvalidRequestError);
-    expect(calls).toHaveLength(0);
+    function makeChatClient() {
+      const calls: Array<Record<string, unknown>> = [];
+      const create = async (params: Record<string, unknown>) => {
+        calls.push(params);
+        return chatReply;
+      };
+
+      return { client: { chat: { completions: { create } } } as unknown as OpenAI, calls };
+    }
+
+    const withMetadata: Message[] = [
+      ...userHi,
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "a",
+            input: {},
+            providerMetadata: {
+              openaiResponses: { model: "gpt-5.6", reasoningItems: [reasoningItem()] },
+            },
+          },
+        ],
+      },
+      { role: "tool", toolCallId: "call_1", content: "ok" },
+    ];
+
+    const withoutMetadata: Message[] = withMetadata.map((message) =>
+      message.toolCalls
+        ? {
+            ...message,
+            toolCalls: message.toolCalls.map(({ providerMetadata: _dropped, ...call }) => call),
+          }
+        : message,
+    );
+
+    it.each(["openai", "deepseek", "groq", "xai", "mistral"])(
+      "the Chat path (provider %s) sends the same request with and without the key",
+      async (provider) => {
+        const withKey = makeChatClient();
+        const withoutKey = makeChatClient();
+
+        await new OpenAIModel(withKey.client, { name: "gpt-4o-mini" }, provider).complete(
+          withMetadata,
+        );
+        await new OpenAIModel(withoutKey.client, { name: "gpt-4o-mini" }, provider).complete(
+          withoutMetadata,
+        );
+
+        expect(withKey.calls[0]?.messages).toEqual(withoutKey.calls[0]?.messages);
+        expect(JSON.stringify(withKey.calls[0])).not.toContain("ENC_1");
+        expect(JSON.stringify(withKey.calls[0])).not.toContain("openaiResponses");
+      },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Streaming (card 4)
+// ---------------------------------------------------------------------------
+
+type StreamEvent = OpenAI.Responses.ResponseStreamEvent;
+
+let sequence = 0;
+
+function event(body: Record<string, unknown>): StreamEvent {
+  sequence += 1;
+
+  return { sequence_number: sequence, ...body } as unknown as StreamEvent;
+}
+
+const textDelta = (delta: string) =>
+  event({
+    type: "response.output_text.delta",
+    delta,
+    item_id: "msg_1",
+    output_index: 0,
+    content_index: 0,
+    logprobs: [],
+  });
+
+const itemDone = (item: OpenAI.Responses.ResponseOutputItem, outputIndex = 0) =>
+  event({ type: "response.output_item.done", item, output_index: outputIndex });
+
+const completedEvent = (response: ResponseFixture) =>
+  event({ type: "response.completed", response });
+
+const incompleteEvent = (response: ResponseFixture) =>
+  event({ type: "response.incomplete", response });
+
+/** Noise the translator must ignore. */
+const noise = () => [
+  event({ type: "response.created", response: makeResponse({ status: "in_progress" }) }),
+  event({ type: "response.in_progress", response: makeResponse({ status: "in_progress" }) }),
+  event({
+    type: "response.reasoning_summary_text.delta",
+    delta: "hidden",
+    item_id: "rs_1",
+    output_index: 0,
+    summary_index: 0,
+  }),
+];
+
+async function collect(iterable: AsyncIterable<ModelStreamChunk>): Promise<ModelStreamChunk[]> {
+  const chunks: ModelStreamChunk[] = [];
+
+  for await (const chunk of iterable) {
+    chunks.push(chunk);
+  }
+
+  return chunks;
+}
+
+/** Drain a stream that is expected to throw; returns what arrived before the throw. */
+async function collectUntilError(iterable: AsyncIterable<ModelStreamChunk>) {
+  const chunks: ModelStreamChunk[] = [];
+  let error: unknown;
+
+  try {
+    for await (const chunk of iterable) {
+      chunks.push(chunk);
+    }
+  } catch (thrown) {
+    error = thrown;
+  }
+
+  return { chunks, error };
+}
+
+describe("OpenAIResponsesModel.stream()", () => {
+  it("streams a text-only response: deltas then one done with finish and usage", async () => {
+    const { client, calls, requestOptions } = makeFakeClient({
+      events: [
+        ...noise(),
+        textDelta("Hel"),
+        textDelta("lo"),
+        itemDone(textMessage("Hello")),
+        completedEvent(makeResponse({ output: [textMessage("Hello")] })),
+      ],
+    });
+    const controller = new AbortController();
+
+    const chunks = await collect(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi, {
+        signal: controller.signal,
+      }),
+    );
+
+    expect(chunks).toEqual([
+      { type: "delta", content: "Hel" },
+      { type: "delta", content: "lo" },
+      { type: "done", finishReason: "stop", usage: { input: 10, output: 4, total: 14 } },
+    ]);
+    expect(firstParams(calls)).toEqual({
+      model: "gpt-5.6",
+      input: [{ role: "user", content: "hi" }],
+      store: false,
+      include: ["reasoning.encrypted_content"],
+      stream: true,
+    });
+    expect(requestOptions[0]).toEqual({ signal: controller.signal });
+  });
+
+  it("streams a single tool call: tool-call carries the replay metadata, then done(tool_calls)", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        ...noise(),
+        itemDone(reasoningItem(), 0),
+        itemDone(
+          functionCall({ call_id: "call_abc", name: "getWeather", arguments: '{"city":"Cairo"}' }),
+          1,
+        ),
+        completedEvent(makeResponse()),
+      ],
+    });
+
+    const chunks = await collect(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi, {
+        tools: [weatherTool()],
+      }),
+    );
+
+    expect(chunks).toEqual([
+      {
+        type: "tool-call",
+        id: "call_abc",
+        name: "getWeather",
+        input: { city: "Cairo" },
+        providerMetadata: {
+          openaiResponses: { model: "gpt-5.6", reasoningItems: [reasoningItem()] },
+        },
+      },
+      { type: "done", finishReason: "tool_calls", usage: { input: 10, output: 4, total: 14 } },
+    ]);
+  });
+
+  it("streams parallel tool calls in order; only the first carries the metadata", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        textDelta("Checking both."),
+        itemDone(reasoningItem(), 0),
+        itemDone(functionCall({ call_id: "c1", name: "a", arguments: "{}" }), 1),
+        itemDone(functionCall({ call_id: "c2", name: "b", arguments: '{"x":1}' }), 2),
+        completedEvent(makeResponse()),
+      ],
+    });
+
+    const chunks = await collect(new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi));
+
+    expect(chunks.map((chunk) => chunk.type)).toEqual(["delta", "tool-call", "tool-call", "done"]);
+    expect(chunks[1]).toMatchObject({ id: "c1", providerMetadata: { openaiResponses: {} } });
+    expect(chunks[2]).toEqual({ type: "tool-call", id: "c2", name: "b", input: { x: 1 } });
+  });
+
+  it("skips a function_call the API marked incomplete and does not report tool_calls for it", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        itemDone(functionCall({ call_id: "c1", arguments: '{"ci', status: "incomplete" })),
+        incompleteEvent(
+          makeResponse({ status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }),
+        ),
+      ],
+    });
+
+    const chunks = await collect(new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi));
+
+    expect(chunks).toEqual([
+      { type: "done", finishReason: "length", usage: { input: 10, output: 4, total: 14 } },
+    ]);
+  });
+
+  it("maps response.incomplete / max_output_tokens to length and keeps the partial text", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        textDelta("Partial"),
+        incompleteEvent(
+          makeResponse({ status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }),
+        ),
+      ],
+    });
+
+    const chunks = await collect(new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi));
+
+    expect(chunks).toEqual([
+      { type: "delta", content: "Partial" },
+      { type: "done", finishReason: "length", usage: { input: 10, output: 4, total: 14 } },
+    ]);
+  });
+
+  it("maps response.incomplete / content_filter to error", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        incompleteEvent(
+          makeResponse({ status: "incomplete", incomplete_details: { reason: "content_filter" } }),
+        ),
+      ],
+    });
+
+    const chunks = await collect(new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi));
+
+    expect(chunks.at(-1)).toMatchObject({ type: "done", finishReason: "error" });
+  });
+
+  it("streams refusal text as a normal delta", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        event({
+          type: "response.refusal.delta",
+          delta: "I cannot help.",
+          item_id: "msg_1",
+          output_index: 0,
+          content_index: 0,
+        }),
+        completedEvent(makeResponse()),
+      ],
+    });
+
+    const chunks = await collect(new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi));
+
+    expect(chunks[0]).toEqual({ type: "delta", content: "I cannot help." });
+    expect(chunks.at(-1)).toMatchObject({ type: "done", finishReason: "stop" });
+  });
+
+  it("throws ProviderError for a mid-stream response.failed, after the deltas already sent", async () => {
+    const { client } = makeFakeClient({
+      events: [
+        textDelta("Par"),
+        event({
+          type: "response.failed",
+          response: makeResponse({
+            status: "failed",
+            error: { code: "server_error", message: "boom" },
+          }),
+        }),
+      ],
+    });
+
+    const { chunks, error } = await collectUntilError(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi),
+    );
+
+    expect(chunks).toEqual([{ type: "delta", content: "Par" }]);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(error).toMatchObject({
+      message: "boom",
+      context: { code: "server_error", responseId: "resp_1", model: "gpt-5.6" },
+    });
+  });
+
+  it("throws through the error mapper for an in-stream error event", async () => {
+    const plain = makeFakeClient({
+      events: [event({ type: "error", code: "server_error", message: "kaput", param: null })],
+    });
+    const limited = makeFakeClient({
+      events: [
+        event({ type: "error", code: "rate_limit_exceeded", message: "slow down", param: null }),
+      ],
+    });
+
+    const first = await collectUntilError(
+      new OpenAIResponsesModel(plain.client, { name: "gpt-5.6" }).stream(userHi),
+    );
+    const second = await collectUntilError(
+      new OpenAIResponsesModel(limited.client, { name: "gpt-5.6" }).stream(userHi),
+    );
+
+    expect(first.error).toBeInstanceOf(ProviderError);
+    expect(first.error).toMatchObject({ message: "kaput" });
+    expect(second.error).toBeInstanceOf(ProviderRateLimitError);
+  });
+
+  it("throws ProviderError when the stream ends without a terminal event", async () => {
+    const { client } = makeFakeClient({ events: [textDelta("cut off")] });
+
+    const { chunks, error } = await collectUntilError(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi),
+    );
+
+    expect(chunks).toEqual([{ type: "delta", content: "cut off" }]);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(error).toMatchObject({ message: expect.stringContaining("before response.completed") });
+  });
+
+  it("wraps a rejected request like the Chat path", async () => {
+    const { client } = makeFakeClient({
+      error: Object.assign(new Error("bad key"), { status: 401, code: "invalid_api_key" }),
+    });
+
+    const { error } = await collectUntilError(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi),
+    );
+
+    expect(error).toMatchObject({ message: "bad key" });
+    expect((error as Error).constructor.name).toBe("ProviderAuthError");
+  });
+
+  it("forwards the abort signal and maps the SDK's abort rejection to a typed error", async () => {
+    const controller = new AbortController();
+    const requestOptions: unknown[] = [];
+    const client = {
+      responses: {
+        create: async (_params: unknown, requestOption?: { signal?: AbortSignal }) => {
+          requestOptions.push(requestOption);
+
+          return (async function* () {
+            yield textDelta("one");
+            controller.abort();
+
+            if (requestOption?.signal?.aborted) {
+              throw new OpenAIClient.APIUserAbortError();
+            }
+
+            yield completedEvent(makeResponse());
+          })();
+        },
+      },
+    } as unknown as OpenAI;
+
+    const { chunks, error } = await collectUntilError(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi, {
+        signal: controller.signal,
+      }),
+    );
+
+    expect(requestOptions[0]).toEqual({ signal: controller.signal });
+    expect(chunks).toEqual([{ type: "delta", content: "one" }]);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as Error).cause).toBeInstanceOf(OpenAIClient.APIUserAbortError);
+  });
+
+  it("round-trips a streamed tool turn: next request replays the reasoning before the function_call", async () => {
+    const { client, calls } = makeFakeClient({
+      events: [
+        itemDone(reasoningItem(), 0),
+        itemDone(functionCall({ call_id: "call_1", name: "getWeather", arguments: "{}" }), 1),
+        completedEvent(makeResponse()),
+      ],
+      response: makeResponse(),
+    });
+    const model = new OpenAIResponsesModel(client, { name: "gpt-5.6" });
+
+    // What the agent does with the chunks: rebuild the tool call with its metadata.
+    const toolCalls = (await collect(model.stream(userHi)))
+      .filter((chunk) => chunk.type === "tool-call")
+      .map((chunk) => {
+        const { type: _type, ...call } = chunk as Extract<ModelStreamChunk, { type: "tool-call" }>;
+
+        return call;
+      });
+
+    await model.complete([
+      ...userHi,
+      { role: "assistant", content: "", toolCalls },
+      { role: "tool", toolCallId: "call_1", content: "ok" },
+    ]);
+
+    expect(calls[1]?.input).toEqual([
+      { role: "user", content: "hi" },
+      replayedReasoning(),
+      { type: "function_call", call_id: "call_1", name: "getWeather", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+    ]);
+  });
+
+  it("yields the same chunk order as the Chat path: deltas, tool-calls, then done", async () => {
+    const chatChunks = [
+      { choices: [{ index: 0, delta: { content: "Checking." }, finish_reason: null }] },
+      {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, id: "c1", function: { name: "a", arguments: "{}" } },
+                { index: 1, id: "c2", function: { name: "b", arguments: '{"x":1}' } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+      { choices: [], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } },
+    ];
+    const chatClient = {
+      chat: {
+        completions: {
+          create: async () =>
+            (async function* () {
+              for (const chunk of chatChunks) {
+                yield chunk;
+              }
+            })(),
+        },
+      },
+    } as unknown as OpenAI;
+    const { client } = makeFakeClient({
+      events: [
+        textDelta("Checking."),
+        itemDone(functionCall({ call_id: "c1", name: "a", arguments: "{}" }), 1),
+        itemDone(functionCall({ call_id: "c2", name: "b", arguments: '{"x":1}' }), 2),
+        completedEvent(makeResponse()),
+      ],
+    });
+
+    const chat = await collect(new OpenAIModel(chatClient, { name: "gpt-4o-mini" }).stream(userHi));
+    const responses = await collect(
+      new OpenAIResponsesModel(client, { name: "gpt-5.6" }).stream(userHi),
+    );
+
+    expect(responses).toEqual(chat);
   });
 });
