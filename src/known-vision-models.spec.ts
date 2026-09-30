@@ -20,11 +20,20 @@ describe("inferVisionCapability", () => {
     expect(inferVisionCapability("gpt-4.1-mini")).toBe(true);
   });
 
-  it("recognizes o1 and o3 reasoning models", () => {
+  it("recognizes gpt-5 and gpt-6 families", () => {
+    expect(inferVisionCapability("gpt-5")).toBe(true);
+    expect(inferVisionCapability("gpt-5-mini")).toBe(true);
+    expect(inferVisionCapability("gpt-6-astra")).toBe(true);
+    expect(inferVisionCapability("gpt-6-sol")).toBe(true);
+    expect(inferVisionCapability("gpt-6-luna")).toBe(true);
+  });
+
+  it("recognizes o-series reasoning models", () => {
     expect(inferVisionCapability("o1")).toBe(true);
     expect(inferVisionCapability("o1-preview")).toBe(true);
     expect(inferVisionCapability("o3")).toBe(true);
     expect(inferVisionCapability("o3-mini")).toBe(true);
+    expect(inferVisionCapability("o4-mini")).toBe(true);
   });
 
   it("recognizes chatgpt-4o", () => {

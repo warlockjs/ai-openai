@@ -20,6 +20,12 @@ describe("inferReasoningCapability()", () => {
     expect(inferReasoningCapability("gpt-5-mini")).toBe(true);
   });
 
+  it("returns true for the gpt-6 family", () => {
+    expect(inferReasoningCapability("gpt-6-astra")).toBe(true);
+    expect(inferReasoningCapability("gpt-6-sol")).toBe(true);
+    expect(inferReasoningCapability("gpt-6-luna")).toBe(true);
+  });
+
   it("is case-insensitive", () => {
     expect(inferReasoningCapability("O3-MINI")).toBe(true);
     expect(inferReasoningCapability("GPT-5-PRO")).toBe(true);

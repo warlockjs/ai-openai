@@ -116,7 +116,7 @@ export type OpenAIModelConfig = ModelConfig & {
    * Override the auto-inferred `reasoning` capability. When omitted,
    * the adapter checks the model name against a known-prefix list (see
    * `known-reasoning-models.ts`) — `true` for the o-series (`o1*`,
-   * `o3*`, `o4*`) and the `gpt-5*` family, `false` otherwise. Setting
+   * `o3*`, `o4*`) and the `gpt-5*` / `gpt-6*` families, `false` otherwise. Setting
    * this explicitly always wins over inference — useful for fine-tuned
    * reasoning models or gateways exposing reasoning under a custom
    * name. When `false`, `ModelCallOptions.reasoning` is ignored rather

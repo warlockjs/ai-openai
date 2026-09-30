@@ -15,8 +15,11 @@ const VISION_CAPABLE_PREFIXES = [
   "gpt-4o",
   "gpt-4-turbo",
   "gpt-4.1",
+  "gpt-5",
+  "gpt-6",
   "o1",
   "o3",
+  "o4",
   "chatgpt-4o",
 ];
 

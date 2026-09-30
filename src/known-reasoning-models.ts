@@ -12,11 +12,11 @@
  * per-model via `openai.model({ name, reasoning: true | false })` —
  * explicit config wins over inference in either direction.
  */
-const REASONING_CAPABLE_PREFIXES = ["o1", "o3", "o4", "gpt-5"];
+const REASONING_CAPABLE_PREFIXES = ["o1", "o3", "o4", "gpt-5", "gpt-6"];
 
 /**
  * Infer whether a given OpenAI model name is a reasoning model (o-series
- * and the gpt-5 family) based on the known-prefix list. Unknown models
+ * and the gpt-5 / gpt-6 families) based on the known-prefix list. Unknown models
  * default to `false` so the adapter never forwards an unsupported
  * `reasoning_effort` param to a non-reasoning model (which would 400).
  *
@@ -24,6 +24,7 @@ const REASONING_CAPABLE_PREFIXES = ["o1", "o3", "o4", "gpt-5"];
  * inferReasoningCapability("o3-mini");          // → true
  * inferReasoningCapability("o4-mini");          // → true
  * inferReasoningCapability("gpt-5-pro");        // → true
+ * inferReasoningCapability("gpt-6-astra");      // → true
  * inferReasoningCapability("gpt-4o");           // → false
  * inferReasoningCapability("custom-llm");       // → false
  */
