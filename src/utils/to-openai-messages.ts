@@ -76,7 +76,7 @@ function addPromptCacheBreakpoints(
   const marked = [...messages];
   for (let index = marked.length - 1; index >= 0 && remaining > 0; index--) {
     const message = marked[index];
-    if (message.role !== "user") continue;
+    if (message === undefined || message.role !== "user") continue;
 
     if (typeof message.content === "string") {
       marked[index] = {
@@ -91,10 +91,9 @@ function addPromptCacheBreakpoints(
 
     const content = [...message.content];
     for (let partIndex = content.length - 1; partIndex >= 0 && remaining > 0; partIndex--) {
-      content[partIndex] = {
-        ...content[partIndex],
-        prompt_cache_breakpoint: { mode: "explicit" },
-      };
+      const part = content[partIndex];
+      if (part === undefined) continue;
+      content[partIndex] = { ...part, prompt_cache_breakpoint: { mode: "explicit" } };
       remaining--;
     }
     marked[index] = { ...message, content };

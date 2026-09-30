@@ -7,6 +7,13 @@ type CreateCall = {
   params: OpenAI.Chat.Completions.ChatCompletionCreateParams;
 };
 
+/** The params of the first recorded request; fails the test when none was made. */
+function firstParams(calls: readonly CreateCall[]): CreateCall["params"] {
+  const call = calls[0];
+  if (call === undefined) throw new Error("expected the fake client to have been called");
+  return call.params;
+}
+
 /**
  * Build a fake OpenAI client whose `chat.completions.create()` records the
  * params it was called with and returns a scripted response (for `complete()`)
@@ -68,10 +75,10 @@ describe("OpenAIModel.complete()", () => {
     await model.complete([{ role: "user", content: "hi" }]);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].params.model).toBe("gpt-4o-mini");
-    expect(calls[0].params.temperature).toBe(0.4);
-    expect(calls[0].params.max_completion_tokens).toBe(256);
-    expect(calls[0].params.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(firstParams(calls).model).toBe("gpt-4o-mini");
+    expect(firstParams(calls).temperature).toBe(0.4);
+    expect(firstParams(calls).max_completion_tokens).toBe(256);
+    expect(firstParams(calls).messages).toEqual([{ role: "user", content: "hi" }]);
   });
 
   // Current OpenAI models answer 400 unsupported_parameter to `max_tokens`
@@ -82,8 +89,8 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].params).not.toHaveProperty("max_tokens");
-    expect(calls[0].params.max_completion_tokens).toBe(512);
+    expect(firstParams(calls)).not.toHaveProperty("max_tokens");
+    expect(firstParams(calls).max_completion_tokens).toBe(512);
   });
 
   it("omits temperature for a reasoning-capable model, which rejects non-default values", async () => {
@@ -92,7 +99,7 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { temperature: 0.7 });
 
-    expect(calls[0].params).not.toHaveProperty("temperature");
+    expect(firstParams(calls)).not.toHaveProperty("temperature");
   });
 
   it("per-call options override instance defaults", async () => {
@@ -108,8 +115,8 @@ describe("OpenAIModel.complete()", () => {
       maxTokens: 64,
     });
 
-    expect(calls[0].params.temperature).toBe(0.9);
-    expect(calls[0].params.max_completion_tokens).toBe(64);
+    expect(firstParams(calls).temperature).toBe(0.9);
+    expect(firstParams(calls).max_completion_tokens).toBe(64);
   });
 
   it("normalizes the response into ModelResponse shape", async () => {
@@ -133,9 +140,9 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].params.temperature).toBeUndefined();
-    expect(calls[0].params.max_completion_tokens).toBeUndefined();
-    expect(calls[0].params).not.toHaveProperty("max_tokens");
+    expect(firstParams(calls).temperature).toBeUndefined();
+    expect(firstParams(calls).max_completion_tokens).toBeUndefined();
+    expect(firstParams(calls)).not.toHaveProperty("max_tokens");
   });
 
   it("forwards an AbortSignal to the create call's request options", async () => {
@@ -295,7 +302,7 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { effort: "high" },
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("high");
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe("high");
   });
 
   it.each([
@@ -312,7 +319,7 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort } });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe(expected);
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe(expected);
   });
 
   it("does NOT forward reasoning_effort for a non-reasoning model", async () => {
@@ -323,7 +330,7 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { effort: "high" },
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   it("omits reasoning_effort when no reasoning option is supplied", async () => {
@@ -332,7 +339,7 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   it("ignores reasoning.maxTokens (no Chat Completions equivalent) but still forwards effort", async () => {
@@ -343,7 +350,10 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { effort: "low", maxTokens: 2048 },
     });
 
-    const params = calls[0].params as { reasoning_effort?: string; max_completion_tokens?: number };
+    const params = firstParams(calls) as {
+      reasoning_effort?: string;
+      max_completion_tokens?: number;
+    };
     expect(params.reasoning_effort).toBe("low");
     expect(params).not.toHaveProperty("thinkingBudget");
     expect(params).not.toHaveProperty("reasoning");
@@ -357,7 +367,7 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { maxTokens: 1024 },
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   it("emits reasoning_effort: 'none' explicitly for a reasoning-capable model", async () => {
@@ -372,7 +382,7 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { effort: "none" },
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("none");
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe("none");
   });
 
   it("does NOT forward reasoning_effort: 'none' for a non-reasoning model", async () => {
@@ -383,7 +393,7 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { effort: "none" },
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   /** A minimal valid tool config — only its presence in `options.tools` matters here. */
@@ -414,7 +424,7 @@ describe("OpenAIModel.complete()", () => {
       tools: [fakeTool()],
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("none");
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe("none");
   });
 
   it("still omits reasoning_effort for a reasoning-capable model called with NO tools and no explicit option", async () => {
@@ -427,7 +437,7 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   it("does NOT default reasoning_effort for a non-reasoning model called with tools", async () => {
@@ -438,7 +448,7 @@ describe("OpenAIModel.complete()", () => {
       tools: [fakeTool()],
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   it("an explicit reasoning.effort still wins over the tools-present default, in either direction", async () => {
@@ -450,7 +460,7 @@ describe("OpenAIModel.complete()", () => {
       reasoning: { effort: "high" },
     });
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("high");
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe("high");
   });
 
   it("sends model cache settings and explicit breakpoints for OpenAI", async () => {
@@ -465,9 +475,9 @@ describe("OpenAIModel.complete()", () => {
       cacheControl: { breakpoints: 1 },
     });
 
-    expect(calls[0].params.prompt_cache_key).toBe("tenant:42");
-    expect(calls[0].params.prompt_cache_retention).toBe("24h");
-    expect(calls[0].params.messages).toEqual([
+    expect(firstParams(calls).prompt_cache_key).toBe("tenant:42");
+    expect(firstParams(calls).prompt_cache_retention).toBe("24h");
+    expect(firstParams(calls).messages).toEqual([
       {
         role: "user",
         content: [{ type: "text", text: "hi", prompt_cache_breakpoint: { mode: "explicit" } }],
@@ -487,9 +497,9 @@ describe("OpenAIModel.complete()", () => {
 
       await model.complete([{ role: "user", content: "hi" }], { cacheControl: { breakpoints: 1 } });
 
-      expect(calls[0].params).not.toHaveProperty("prompt_cache_key");
-      expect(calls[0].params).not.toHaveProperty("prompt_cache_retention");
-      expect(calls[0].params.messages).toEqual([{ role: "user", content: "hi" }]);
+      expect(firstParams(calls)).not.toHaveProperty("prompt_cache_key");
+      expect(firstParams(calls)).not.toHaveProperty("prompt_cache_retention");
+      expect(firstParams(calls).messages).toEqual([{ role: "user", content: "hi" }]);
     },
   );
 
@@ -507,7 +517,7 @@ describe("OpenAIModel.complete()", () => {
       },
     ]);
 
-    expect(calls[0].params.messages).toEqual([
+    expect(firstParams(calls).messages).toEqual([
       {
         role: "user",
         content: [
@@ -632,12 +642,12 @@ describe("OpenAIModel.complete()", () => {
       ],
     });
 
-    expect(calls[0].params.tools).toHaveLength(1);
+    expect(firstParams(calls).tools).toHaveLength(1);
 
     // openai v7 made `ChatCompletionTool` a union — reach `.function`
     // through the `type` discriminant so a custom-tool regression fails
     // loudly here instead of quietly skipping the name assertion.
-    const converted = calls[0].params.tools?.[0];
+    const converted = firstParams(calls).tools?.[0];
 
     if (converted?.type !== "function") {
       throw new Error(`Expected a function tool on the wire, got "${converted?.type}".`);
@@ -658,7 +668,7 @@ describe("OpenAIModel.complete()", () => {
       },
     });
 
-    expect(calls[0].params.response_format).toEqual({
+    expect(firstParams(calls).response_format).toEqual({
       type: "json_schema",
       json_schema: {
         name: "response",
@@ -680,7 +690,7 @@ describe("OpenAIModel.complete()", () => {
       responseSchema: { type: "array", items: { type: "string" } },
     });
 
-    expect(calls[0].params.response_format).toEqual({ type: "json_object" });
+    expect(firstParams(calls).response_format).toEqual({ type: "json_object" });
   });
 
   it("omits response_format entirely when no responseSchema is supplied", async () => {
@@ -689,7 +699,7 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].params.response_format).toBeUndefined();
+    expect(firstParams(calls).response_format).toBeUndefined();
   });
 
   it("config responseFormat 'json_object' forces loose mode even for object-root schemas", async () => {
@@ -703,7 +713,7 @@ describe("OpenAIModel.complete()", () => {
       responseSchema: { type: "object", properties: { x: { type: "string" } } },
     });
 
-    expect(calls[0].params.response_format).toEqual({ type: "json_object" });
+    expect(firstParams(calls).response_format).toEqual({ type: "json_object" });
   });
 
   it("config responseFormat 'text' emits no response_format even with a schema", async () => {
@@ -714,7 +724,7 @@ describe("OpenAIModel.complete()", () => {
       responseSchema: { type: "object", properties: { x: { type: "string" } } },
     });
 
-    expect(calls[0].params.response_format).toBeUndefined();
+    expect(firstParams(calls).response_format).toBeUndefined();
   });
 
   it("config responseFormat 'json_schema' still degrades a non-object schema to json_object", async () => {
@@ -727,7 +737,7 @@ describe("OpenAIModel.complete()", () => {
       responseSchema: { type: "array", items: { type: "string" } },
     });
 
-    expect(calls[0].params.response_format).toEqual({ type: "json_object" });
+    expect(firstParams(calls).response_format).toEqual({ type: "json_object" });
   });
 
   it("config responseFormat 'json_schema' uses strict mode for a strict-compliant object schema", async () => {
@@ -742,7 +752,7 @@ describe("OpenAIModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { responseSchema: schema });
 
-    expect(calls[0].params.response_format).toEqual({
+    expect(firstParams(calls).response_format).toEqual({
       type: "json_schema",
       json_schema: { name: "response", schema, strict: true },
     });
@@ -763,7 +773,7 @@ describe("OpenAIModel.complete()", () => {
       },
     });
 
-    expect(calls[0].params.response_format).toEqual({ type: "json_object" });
+    expect(firstParams(calls).response_format).toEqual({ type: "json_object" });
   });
 
   it("extracts multiple parallel tool calls preserving order", async () => {
@@ -1175,9 +1185,9 @@ describe("OpenAIModel.stream()", () => {
       // drain
     }
 
-    expect(calls[0].params.stream).toBe(true);
+    expect(firstParams(calls).stream).toBe(true);
     expect(
-      (calls[0].params as { stream_options?: { include_usage?: boolean } }).stream_options
+      (firstParams(calls) as { stream_options?: { include_usage?: boolean } }).stream_options
         ?.include_usage,
     ).toBe(true);
   });
@@ -1196,9 +1206,9 @@ describe("OpenAIModel.stream()", () => {
       // drain
     }
 
-    expect(calls[0].params).not.toHaveProperty("max_tokens");
-    expect(calls[0].params.max_completion_tokens).toBe(300);
-    expect(calls[0].params).not.toHaveProperty("temperature");
+    expect(firstParams(calls)).not.toHaveProperty("max_tokens");
+    expect(firstParams(calls).max_completion_tokens).toBe(300);
+    expect(firstParams(calls)).not.toHaveProperty("temperature");
   });
 
   it("accumulates a tool call whose id/name/arguments arrive across multiple chunks", async () => {
@@ -1416,7 +1426,7 @@ describe("OpenAIModel.stream()", () => {
       // drain
     }
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("medium");
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe("medium");
   });
 
   it("defaults reasoning_effort to 'none' on the streaming wire too, for tools with no explicit reasoning option", async () => {
@@ -1444,7 +1454,7 @@ describe("OpenAIModel.stream()", () => {
       // drain
     }
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBe("none");
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBe("none");
   });
 
   it("does NOT forward reasoning_effort on the streaming wire for a non-reasoning model", async () => {
@@ -1459,7 +1469,7 @@ describe("OpenAIModel.stream()", () => {
       // drain
     }
 
-    expect((calls[0].params as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
+    expect((firstParams(calls) as { reasoning_effort?: string }).reasoning_effort).toBeUndefined();
   });
 
   it("forwards an AbortSignal to the streaming create call's request options", async () => {
