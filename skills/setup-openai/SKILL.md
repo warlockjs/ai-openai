@@ -1,6 +1,6 @@
 ---
 name: setup-openai
-description: 'Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?, pdf?, audio?}) for ModelContract, .embedder({name, dimensions?}) for embeddings, .image({name, pricing?}) for gpt-image-*/dall-e-* image generation (via ai.image). PDF input maps to OpenAI file parts (opt-in pdf:true), audio input to input_audio (opt-in audio:true). Triggers: `OpenAISDK`, `.model`, `.embedder`, `.image`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, `gpt-image`, `dall-e`, `ai.image`, `pdf input`, `input_audio`, o-series / gpt-5 reasoning, `api: "responses"`, Responses API, reasoning with tools, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock", "generate images with gpt-image / dall-e", "send a pdf / audio to gpt-4o"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: the ai.image verb surface — `@warlock.js/ai/generate-images/SKILL.md`; agent wiring — `@warlock.js/ai/run-ai-agent/SKILL.md`; adapter comparison — `@warlock.js/ai/pick-ai-provider/SKILL.md`; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.'
+description: 'Wire @warlock.js/ai-openai — new OpenAISDK({apiKey, baseURL?, provider?, pricing?}) for OpenAI / Azure / OpenRouter, .model({name, vision?, reasoning?, structuredOutput?, responseFormat?, pdf?, audio?}) for ModelContract, .embedder({name, dimensions?}) for embeddings, .image({name, pricing?}) for gpt-image-*/dall-e-* image generation (via ai.image). PDF input maps to OpenAI file parts (opt-in pdf:true), audio input to input_audio (opt-in audio:true). Triggers: `OpenAISDK`, `.model`, `.embedder`, `.image`, `.embed`, `.embedMany`, `baseURL`, `pricing`, `responseSchema`, `responseFormat`, `reasoning_effort`, `reasoningTokens`, `cachedTokens`, `gpt-image`, `dall-e`, `ai.image`, `pdf input`, `input_audio`, o-series / gpt-5 reasoning, `api: "responses"`, Responses API, reasoning with tools, prompt caching; "wire openai into a warlock agent", "configure gpt-4o", "use o3 / gpt-5 reasoning effort", "route through openrouter or azure openai", "openai embeddings with warlock", "generate images with gpt-image / dall-e", "send a pdf / audio to gpt-4o"; typical import `import { OpenAISDK } from "@warlock.js/ai-openai"`. Skip: the ai.image verb surface — the `generate-images` topic of the `warlock-js-ai` skill; agent wiring — the `run-ai-agent` topic of the `warlock-js-ai` skill; adapter comparison — the `pick-ai-provider` topic of the `warlock-js-ai` skill; competing adapters `@warlock.js/ai-anthropic`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `openai` SDK, Vercel `@ai-sdk/openai`.'
 ---
 
 # `@warlock.js/ai-openai`
@@ -89,7 +89,7 @@ const { data } = await ai.image({ model: gpt, prompt: "a red bicycle", size: "10
 
 - `gpt-image-*` is token-metered (price with `{ input, output }`) and always returns base64 bytes — the adapter never sends `response_format` (the API rejects it).
 - `dall-e-*` is per-image (price with `{ perImage }` / `perImageBySize`); defaults to base64, opt into a hosted URL with `options: { responseFormat: "url" }`.
-- The model id is **not validated locally** — `openai.image({ name })` passes it straight to `client.images.generate`, so an id OpenAI does not serve fails at the provider (wrapped into the typed `AIError` hierarchy), not at construction. Same for `openai.speech({ name })` and `openai.transcribe({ name })`. There are no model-id helpers to consult: `isOpenAIImageModel()`, `OPENAI_IMAGE_MODEL_PREFIXES`, `isOpenAISpeechModel()` and `isOpenAITranscriptionModel()` were all removed in 4.13.0 — branch on your own id list if you need one. The verb surface (envelope, options, cost-truth) lives in [`@warlock.js/ai/generate-images/SKILL.md`](@warlock.js/ai/generate-images/SKILL.md).
+- The model id is **not validated locally** — `openai.image({ name })` passes it straight to `client.images.generate`, so an id OpenAI does not serve fails at the provider (wrapped into the typed `AIError` hierarchy), not at construction. Same for `openai.speech({ name })` and `openai.transcribe({ name })`. There are no model-id helpers to consult: `isOpenAIImageModel()`, `OPENAI_IMAGE_MODEL_PREFIXES`, `isOpenAISpeechModel()` and `isOpenAITranscriptionModel()` were all removed in 4.13.0 — branch on your own id list if you need one. The verb surface (envelope, options, cost-truth) lives in the `generate-images` topic of the `warlock-js-ai` skill.
 
 ## Streaming
 
@@ -230,11 +230,11 @@ const { usage } = await ai.agent({ model: openai.model({ name: "gpt-4o-mini" }) 
 usage.cost;  // { input, output, cachedInput?, cachedOutput? } — per-channel USD breakdown of THIS run
 ```
 
-The registry is per-model; `usage.cost` is the per-channel breakdown the framework computes from `tokens × pricing[model]`. Resolution at `model()` time: per-model `pricing` (`openai.model({ name, pricing })`) > SDK registry > `undefined` (no cost computed). See [`@warlock.js/ai/pick-ai-provider/SKILL.md`](@warlock.js/ai/pick-ai-provider/SKILL.md).
+The registry is per-model; `usage.cost` is the per-channel breakdown the framework computes from `tokens × pricing[model]`. Resolution at `model()` time: per-model `pricing` (`openai.model({ name, pricing })`) > SDK registry > `undefined` (no cost computed). See the `pick-ai-provider` topic of the `warlock-js-ai` skill.
 
 ## Errors
 
-Raw OpenAI SDK errors are wrapped into the typed `@warlock.js/ai` `AIError` hierarchy via the adapter's error wrapper. Dispatch keys on `APIError.status + code` combined — see [`@warlock.js/ai/handle-ai-errors/SKILL.md`](@warlock.js/ai/handle-ai-errors/SKILL.md).
+Raw OpenAI SDK errors are wrapped into the typed `@warlock.js/ai` `AIError` hierarchy via the adapter's error wrapper. Dispatch keys on `APIError.status + code` combined — see the `handle-ai-errors` topic of the `warlock-js-ai` skill.
 
 ## When NOT to use this skill
 
@@ -243,6 +243,6 @@ Raw OpenAI SDK errors are wrapped into the typed `@warlock.js/ai` `AIError` hier
 
 ## See also
 
-- [`@warlock.js/ai/run-ai-agent/SKILL.md`](@warlock.js/ai/run-ai-agent/SKILL.md) — passing the model into `ai.agent({...})`
-- [`@warlock.js/ai/embed-text/SKILL.md`](@warlock.js/ai/embed-text/SKILL.md) — embedder usage
-- [`@warlock.js/ai/pick-ai-provider/SKILL.md`](@warlock.js/ai/pick-ai-provider/SKILL.md) — adapter comparison
+- The `run-ai-agent` topic of the `warlock-js-ai` skill — passing the model into `ai.agent({...})`
+- The `embed-text` topic of the `warlock-js-ai` skill — embedder usage
+- The `pick-ai-provider` topic of the `warlock-js-ai` skill — adapter comparison
